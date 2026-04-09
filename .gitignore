@@ -1,0 +1,13 @@
+.idea/
+config.py
+/.venv/
+/log/
+/dist*/
+/build/
+/profile/
+/browser/
+/proxy_auth/
+*.rar
+__pycache__/
+*.pyc
+credentials.jsonb
