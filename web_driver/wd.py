@@ -421,13 +421,13 @@ class WebDriver:
 
         for task in tasks:
             if task.limit and task.position:
-                task_map.setdefault(task.category_id, [])
-                task_map[task.category_id].append(task)
+                task_map.setdefault((task.category_id, task.campaign_id), [])
+                task_map[(task.category_id, task.campaign_id)].append(task)
 
         for value in task_map.values():
             value.sort(key=lambda x: x.position)
 
-        for category_id, items in task_map.items():
+        for (category_id, _), items in task_map.items():
             for item in items:
                 while item.position < 5:
                     print(item)
@@ -450,8 +450,6 @@ class WebDriver:
                             item2.position += 1
                             continue
                     print(f'Смена, увеличение затрат на {bid_rub - item.bid}')
-                    if bid_rub - item.bid > 20:
-                        break
 
                     rows = self.get_items(item.campaign_id)
 
@@ -472,6 +470,7 @@ class WebDriver:
                             "sku_id": sku,
                         })
                     print(body)
+                    time.sleep(2)
                     # answer = self.change_bid(item.campaign_id, body)
                     # if answer:
                     #     print("Смена прошла успешна")
