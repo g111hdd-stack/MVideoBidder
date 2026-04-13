@@ -426,7 +426,7 @@ class WebDriver:
                         category_id=category_id,
                         keywords=keywords
                     ))
-
+        self.log(f"{self.log_startswith}Сбор данных завершён")
         return campaigns
 
     def bidder(self, tasks: list[Task]) -> None:

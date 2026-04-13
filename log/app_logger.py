@@ -39,8 +39,13 @@ def setup_logger() -> logging.Logger:
     gui_handler.setLevel(logging.INFO)
     gui_handler.setFormatter(formatter)
 
+    file_handler = logging.FileHandler("app.log", encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+
     logger.addHandler(console_handler)
     logger.addHandler(gui_handler)
+    logger.addHandler(file_handler)
     logger.propagate = False
 
     return logger

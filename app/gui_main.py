@@ -4,11 +4,13 @@ import logging
 
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
-from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QMetaObject, QThread
+from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
+from log.app_logger import set_gui_logger_callback
+from app.gui_worker import RefreshWorker, BidderCycleWorker
 
 TABLE_HEADERS = [
     "Рекламное ID",
@@ -146,13 +148,13 @@ class CycleIntervalDialog(QDialog):
         layout.addWidget(info_label)
 
         self.spin_box = QSpinBox()
-        self.spin_box.setMinimum(2)
+        self.spin_box.setMinimum(5)
         self.spin_box.setMaximum(1440)
         self.spin_box.setValue(max(2, current_minutes))
         self.spin_box.setSuffix(" мин")
         layout.addWidget(self.spin_box)
 
-        self.note_label = QLabel("Минимальное значение: 2 минуты")
+        self.note_label = QLabel("Минимальное значение: 5 минуты")
         layout.addWidget(self.note_label)
 
         buttons = QDialogButtonBox()
@@ -176,16 +178,24 @@ class MainWindow(QMainWindow):
         self.webdriver = webdriver
         self.url = url
         self.auto_load = auto_load
-        self.storage_path = Path("../campaign_state.json")
+        self.storage_path = Path("campaign_state.json")
+        self.settings_path = Path("app_settings.json")
 
         self.is_running = False
-        self.cycle_interval_ms = 2 * 60 * 1000
+        self.cycle_interval_ms = 5 * 60 * 1000
         self.bidder_timer = QTimer(self)
         self.bidder_timer.timeout.connect(self.run_bidder_cycle)
+
+        self.worker_thread = None
+        self.worker = None
+        self.worker_busy = False
 
         self.model = CampaignTableModel(on_change=self.save_table_state)
 
         self._init_ui()
+        self._load_app_settings()
+        self._init_log_dock()
+        set_gui_logger_callback(self.append_log)
         self._load_empty_rows()
         if self.auto_load:
             QTimer.singleShot(0, self.load_campaigns)
@@ -196,20 +206,22 @@ class MainWindow(QMainWindow):
 
         button_layout = QHBoxLayout()
 
-        self.start_button = QPushButton("Запустить")
-        self.stop_button = QPushButton("Остановить")
+        self.run_button = QPushButton("Запустить")
         self.refresh_button = QPushButton("Обновить")
-        self.interval_button = QPushButton("Интервал: 2 мин")
+        self.logs_button = QPushButton("Показать логи")
+        self.interval_button = QPushButton("Интервал: 5 мин")
+        self.status_label = QLabel("Цикл остановлен")
 
-        self.start_button.clicked.connect(self.start_bidder)
-        self.stop_button.clicked.connect(self.stop_bidder)
+        self.run_button.clicked.connect(self.toggle_bidder)
         self.refresh_button.clicked.connect(self.refresh_from_cabinet)
+        self.logs_button.clicked.connect(self.toggle_logs)
         self.interval_button.clicked.connect(self.open_interval_dialog)
 
-        button_layout.addWidget(self.start_button)
-        button_layout.addWidget(self.stop_button)
+        button_layout.addWidget(self.run_button)
         button_layout.addWidget(self.refresh_button)
+        button_layout.addWidget(self.logs_button)
         button_layout.addWidget(self.interval_button)
+        button_layout.addWidget(self.status_label)
         button_layout.addStretch()
 
         self.table = QTableView()
@@ -293,6 +305,8 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logger.exception(f"Ошибка синхронизации состояния таблицы: {e}")
+
+
 
     def _load_empty_rows(self) -> None:
         rows = []
@@ -570,6 +584,39 @@ class MainWindow(QMainWindow):
             logger.exception(f"Ошибка загрузки состояния таблицы: {e}")
             return {}
 
+    def load_app_settings(self) -> dict:
+        try:
+            if not self.settings_path.exists():
+                return {}
+
+            return json.loads(self.settings_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.exception(f"Ошибка загрузки настроек приложения: {e}")
+            return {}
+
+    def save_app_settings(self) -> None:
+        try:
+            data = {
+                "cycle_interval_minutes": self.cycle_interval_ms // 60000,
+            }
+            self.settings_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.exception(f"Ошибка сохранения настроек приложения: {e}")
+
+    def _load_app_settings(self) -> None:
+        settings = self.load_app_settings()
+
+        minutes = int(settings.get("cycle_interval_minutes", 5))
+        minutes = max(5, minutes)
+
+        self.cycle_interval_ms = minutes * 60 * 1000
+
+        if hasattr(self, "interval_button"):
+            self.interval_button.setText(f"Интервал: {minutes} мин")
+
     def apply_saved_state(self, rows: list[dict]) -> list[dict]:
         saved_state = self.load_table_state()
 
@@ -593,55 +640,38 @@ class MainWindow(QMainWindow):
             return
 
         self.is_running = True
-        self.bidder_timer.start(self.cycle_interval_ms)  # Установка таймера через кнопку
+        self.run_button.setText("Остановить")
+        self.status_label.setText("Цикл запущен")
+        self.bidder_timer.start(self.cycle_interval_ms)
         self.run_bidder_cycle()
 
     def stop_bidder(self) -> None:
         self.is_running = False
         self.bidder_timer.stop()
+        self.run_button.setText("Запустить")
+        self.status_label.setText("Цикл остановлен")
+
+        if self.worker is not None:
+            self.worker.request_stop()
+
+    def toggle_bidder(self) -> None:
+        if self.is_running:
+            self.stop_bidder()
+        else:
+            self.start_bidder()
 
     def refresh_from_cabinet(self) -> None:
-        try:
-            campaigns = self.webdriver.bidder_info()
-            fresh_rows = self.campaigns_to_rows(campaigns)
-            user_state = self.collect_user_state()
-
-            self.save_json_state(fresh_rows, user_state)
-
-            rows_for_table = self.apply_user_state_to_rows(fresh_rows, user_state)
-            self.model.set_rows(rows_for_table)
-            self.fill_position_widgets()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Ошибка", str(e))
+        self._start_worker(RefreshWorker)
 
     def run_bidder_cycle(self) -> None:
         if not self.is_running:
             return
 
-        try:
-            cycle_user_state = self.collect_user_state()
+        if self.worker_busy:
+            logger.info("Предыдущий цикл ещё не завершён")
+            return
 
-            campaigns = self.webdriver.bidder_info()
-            fresh_rows = self.campaigns_to_rows(campaigns)
-
-            self.save_json_state(fresh_rows, cycle_user_state)
-
-            tasks = self.build_tasks_from_json()
-
-            logger.info(f"TASKS COUNT: {len(tasks)}")
-            for task in tasks:
-                logger.info(f"Task: {task}")
-
-            if tasks:
-                self.webdriver.bidder(tasks)
-
-            rows_for_table = self.apply_user_state_to_rows(fresh_rows, cycle_user_state)
-            self.model.set_rows(rows_for_table)
-            self.fill_position_widgets()
-
-        except Exception as e:
-            logger.exception(f"Ошибка цикла bidder: {e}")
+        self._start_worker(BidderCycleWorker)
 
     def apply_user_state_to_rows(self, rows: list[dict], user_state: dict) -> list[dict]:
         for row in rows:
@@ -657,7 +687,7 @@ class MainWindow(QMainWindow):
         return rows
 
     def open_interval_dialog(self) -> None:
-        current_minutes = max(2, self.cycle_interval_ms // 60000)
+        current_minutes = max(5, self.cycle_interval_ms // 60000)
         dialog = CycleIntervalDialog(current_minutes=current_minutes, parent=self)
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -671,6 +701,8 @@ class MainWindow(QMainWindow):
         self.cycle_interval_ms = minutes * 60 * 1000
         self.interval_button.setText(f"Интервал: {minutes} мин")
 
+        self.save_app_settings()
+
         if self.is_running:
             self.bidder_timer.start(self.cycle_interval_ms)
 
@@ -679,3 +711,97 @@ class MainWindow(QMainWindow):
             "Интервал обновлён",
             f"Новый интервал между циклами: {minutes} мин."
         )
+
+    #---------ОКНО ЛОГИРОВАНИЯ В MAIN------------
+
+    def _init_log_dock(self) -> None:
+        self.log_dock = QDockWidget("Логи", self)
+        self.log_dock.setObjectName("log_dock")
+        self.log_dock.setAllowedAreas(
+            Qt.DockWidgetArea.RightDockWidgetArea |
+            Qt.DockWidgetArea.BottomDockWidgetArea
+        )
+
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
+
+        self.log_dock.setWidget(self.log_output)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.log_dock)
+        self.log_dock.hide()
+
+    def toggle_logs(self) -> None:
+        visible = self.log_dock.isVisible()
+        self.log_dock.setVisible(not visible)
+        self.logs_button.setText("Скрыть логи" if not visible else "Показать логи")
+
+    def append_log(self, text: str) -> None:
+        if not hasattr(self, "log_output"):
+            return
+
+        self.log_output.append(text)
+        scrollbar = self.log_output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def closeEvent(self, event) -> None:
+        set_gui_logger_callback(None)
+        super().closeEvent(event)
+
+    #---------ВОРКЕРЫ------------
+
+    def _set_busy(self, busy: bool, text: str = "") -> None:
+        self.worker_busy = busy
+        self.refresh_button.setEnabled(not busy)
+
+        if busy:
+            self.status_label.setText(text or "Выполняется операция...")
+        else:
+            self.status_label.setText("Цикл запущен" if self.is_running else "Цикл остановлен")
+
+    def _start_worker(self, worker_cls) -> None:
+        if self.worker_busy:
+            return
+
+        user_state = self.collect_user_state()
+
+        self.worker_thread = QThread(self)
+        self.worker = worker_cls(
+            webdriver=self.webdriver,
+            user_state=user_state,
+        )
+        self.worker.moveToThread(self.worker_thread)
+
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._on_worker_finished)
+        self.worker.error.connect(self._on_worker_error)
+        self.worker.log.connect(self.append_log)
+
+        self.worker.finished.connect(self.worker_thread.quit)
+        self.worker.error.connect(self.worker_thread.quit)
+
+        self.worker_thread.finished.connect(self._cleanup_worker)
+
+        self._set_busy(True, "Выполняется операция...")
+        self.worker_thread.start()
+
+    def _on_worker_finished(self, rows: list[dict], user_state: dict) -> None:
+        if rows:
+            self.save_json_state(rows, user_state)
+            self.model.set_rows(rows)
+            self.fill_position_widgets()
+
+    def _on_worker_error(self, text: str) -> None:
+        logger.exception(f"Ошибка worker: {text}")
+        QMessageBox.critical(self, "Ошибка", text)
+
+    def _cleanup_worker(self) -> None:
+        self._set_busy(False)
+
+        if self.worker is not None:
+            self.worker.deleteLater()
+            self.worker = None
+
+        if self.worker_thread is not None:
+            self.worker_thread.deleteLater()
+            self.worker_thread = None
+
+
