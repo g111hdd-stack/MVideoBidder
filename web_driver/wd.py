@@ -4,6 +4,8 @@ import time
 import platform
 import requests
 import datetime
+import logging
+
 
 from typing import Type
 
@@ -26,6 +28,7 @@ from domain.dtos import Campaign, Item, Task
 from .create_extension_proxy import create_firefox_proxy_addon
 
 TIME_AWAIT = 10
+logger = logging.getLogger("mvideo_bidder")
 
 
 def get_moscow_time(timeout: int = 60, log_api: bool = False) -> datetime.datetime:
@@ -55,6 +58,7 @@ class AuthException(Exception):
 class WebDriver:
 
     def __init__(self, market: Type[Market], db_conn: DbConnection) -> None:
+        self.gui_logger = None
         self.user = 'MVideoBidder'
         self.base_url = 'https://sellers.mvideo.ru'
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0"
@@ -107,6 +111,14 @@ class WebDriver:
 
         self.driver.maximize_window()
 
+    def set_gui_logger(self, logger_callback=None) -> None:
+        self.gui_logger = logger_callback
+
+    def log(self, message: str) -> None:
+        logger.info(message)
+        if getattr(self, "gui_logger", None):
+            self.gui_logger(message)
+
     def check_auth(self) -> None:
         try:
             WebDriverWait(self.driver, TIME_AWAIT * 4).until(
@@ -127,12 +139,12 @@ class WebDriver:
                 Exception("Превышено время загрузки страницы")
 
             if self.marketplace.link in last_url:
-                print(f"{self.log_startswith}Автоматизация запущена")
+                self.log(f"{self.log_startswith}Автоматизация запущена")
 
                 self.mvideo_auth(self.marketplace)
 
             if self.marketplace.domain in last_url:
-                print(f"{self.log_startswith}Вход в ЛК выполнен")
+                self.log(f"{self.log_startswith}Вход в ЛК выполнен")
 
         except (NoSuchWindowException, InvalidSessionIdException):
             self.quit('Окно браузера было преждевременно закрыто')
@@ -148,7 +160,7 @@ class WebDriver:
             return False
 
         def enter(tr):
-            print(f"{self.log_startswith}Ожидание кода на номер {self.phone}")
+            self.log(f"{self.log_startswith}Ожидание кода на номер {self.phone}")
 
             for _ in range(3):
                 try:
@@ -166,8 +178,8 @@ class WebDriver:
 
             mes = ''.join(ch for ch in mes if ch.isdigit())
 
-            print(f"{self.log_startswith}Код на номер {self.phone} получен: {mes}")
-            print(f"{self.log_startswith}Ввод кода {mes}")
+            self.log(f"{self.log_startswith}Код на номер {self.phone} получен: {mes}")
+            self.log(f"{self.log_startswith}Ввод кода {mes}")
 
             with suppress(TimeoutException):
                 time.sleep(TIME_AWAIT)
@@ -182,7 +194,7 @@ class WebDriver:
                     expected_conditions.element_to_be_clickable(
                         (By.XPATH, "//button[contains(., 'Подтвердить')]")))
 
-                print(f"{self.log_startswith} Нажимаем на кнопку подтвердить ")
+                self.log(f"{self.log_startswith} Нажимаем на кнопку подтвердить ")
 
                 button_confirm.click()
                 time.sleep(TIME_AWAIT)
@@ -194,7 +206,7 @@ class WebDriver:
         for _ in range(3):
             try:
                 time.sleep(TIME_AWAIT)
-                print(f"{self.log_startswith}Ввод номера телефона {self.phone}")
+                self.log(f"{self.log_startswith}Ввод номера телефона {self.phone}")
 
                 input_phone = WebDriverWait(self.driver, TIME_AWAIT * 4).until(
                     expected_conditions.element_to_be_clickable(
@@ -203,7 +215,7 @@ class WebDriver:
                 input_phone.clear()
                 input_phone.send_keys(self.phone)
 
-                print(f"{self.log_startswith}Нажимаем кнопку Войти")
+                self.log(f"{self.log_startswith}Нажимаем кнопку Войти")
 
                 time_request = get_moscow_time()
 
@@ -215,13 +227,13 @@ class WebDriver:
 
                 button_login.click()
 
-                print(f"{self.log_startswith}Номер телефона введён, кнопка Войти нажата")
+                self.log(f"{self.log_startswith}Номер телефона введён, кнопка Войти нажата")
 
                 enter(time_request)
                 return
 
             except TimeoutException:
-                print(f"{self.log_startswith}Не удалось найти поле телефона или кнопку Войти, повторная попытка")
+                self.log(f"{self.log_startswith}Не удалось найти поле телефона или кнопку Войти, повторная попытка")
 
         raise Exception('Страница не получена')
 
@@ -373,7 +385,7 @@ class WebDriver:
                     headers=headers,
                     timeout=30,
                 )
-                print(response.status_code)
+                self.log(f"{self.log_startswith}Ответ change_bid: status_code={response.status_code}")
                 return response.status_code == 201
             except:
                 continue
@@ -430,26 +442,37 @@ class WebDriver:
         for (category_id, _), items in task_map.items():
             for item in items:
                 while item.position < 5:
-                    print(item)
+                    self.log(f"{self.log_startswith}Обработка товара: {item}")
+
                     top_bids = self.get_top_bids(item)
                     if top_bids is None:
-                        print('Нет данных о ставках')
+                        self.log(f"{self.log_startswith}Нет данных о ставках")
                         break
 
                     format_bid = int(item.bid / 10)
                     pos_bid = top_bids[item.position - 1]
+
                     if pos_bid == format_bid:
-                        print(f'Товар уже занимает позицию {item.position}')
+                        self.log(f"{self.log_startswith}Товар уже занимает позицию {item.position}")
                         break
 
                     bid_rub = (pos_bid + 1) * 10
-                    print(f'Чтобы поднять товар до {item.position} нужно изменить ставку до {bid_rub}')
+                    self.log(
+                        f"{self.log_startswith}Чтобы поднять товар до {item.position} "
+                        f"нужно изменить ставку до {bid_rub}"
+                    )
+
                     if bid_rub > item.limit:
-                        print(f'Ставка позиции {bid_rub} больше лимита {item.limit}')
+                        self.log(
+                            f"{self.log_startswith}Ставка позиции {bid_rub} больше лимита {item.limit}"
+                        )
                         for item2 in items:
                             item2.position += 1
-                            continue
-                    print(f'Смена, увеличение затрат на {bid_rub - item.bid}')
+                        continue
+
+                    self.log(
+                        f"{self.log_startswith}Смена ставки, увеличение затрат на {bid_rub - item.bid}"
+                    )
 
                     rows = self.get_items(item.campaign_id)
 
@@ -469,23 +492,25 @@ class WebDriver:
                             "keywords": keywords,
                             "sku_id": sku,
                         })
-                    print(body)
+
+                    self.log(f"{self.log_startswith}Подготовлено тело запроса: {body}")
+
                     time.sleep(2)
+
                     # answer = self.change_bid(item.campaign_id, body)
                     # if answer:
-                    #     print("Смена прошла успешна")
+                    #     self.log(f"{self.log_startswith}Смена прошла успешно")
                     # else:
-                    #     print("Что-то пошло не так")
-                    break
+                    #     self.log(f"{self.log_startswith}Что-то пошло не так")
 
+                    break
                 else:
-                    print(f'Позиция {item.position} больше лимита в 4')
-                continue
+                    self.log(f"{self.log_startswith}Позиция {item.position} больше лимита в 4")
 
 
     def load_url(self, url: str) -> None:
-        print(f"{self.log_startswith}Браузер открыт")
-        print(f"{self.log_startswith}Авторизация")
+        self.log(f"{self.log_startswith}Браузер открыт")
+        self.log(f"{self.log_startswith}Авторизация")
         self.driver.get(url)
         self.check_auth()
 
@@ -501,9 +526,9 @@ class WebDriver:
 
     def quit(self, text: str = None) -> None:
         if text:
-            print(f"{self.log_startswith}Ошибка автоматизации: {text}")
+            self.log(f"{self.log_startswith}Ошибка автоматизации: {text}")
             self.driver.quit()
             raise AuthException(f"{text}\n\nПопробуйте позднее")
         else:
-            print(f"{self.log_startswith}Браузер закрыт")
+            self.log(f"{self.log_startswith}Браузер закрыт")
             self.driver.quit()

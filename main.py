@@ -1,48 +1,57 @@
-import time
+import sys
 
+from PySide6.QtWidgets import QApplication
+
+from log.app_logger import setup_logger
 from database.db import DbConnection
-from domain.dtos import Task, status
+from gui_main import MainWindow
+from log_window import LogWindow
 from web_driver.wd import WebDriver
 
-db_conn = DbConnection()
-market = db_conn.get_market()
-url = market.marketplace_info.link
 
-webdriver = WebDriver(market, db_conn)
+def main() -> int:
+    logger = setup_logger()
+    logger.info("Запуск приложения")
 
-webdriver.load_url(url)
+    app = QApplication(sys.argv)
 
-time_start = time.time()
-campaigns = webdriver.bidder_info()
+    db_conn = DbConnection()
+    market = db_conn.get_market()
+    url = market.marketplace_info.link
 
-tasks = []
+    logger.info("Данные маркетплейса получены")
+
+    webdriver = WebDriver(market, db_conn)
+    logger.info("WebDriver создан")
+
+    window = MainWindow(
+        db_conn=db_conn,
+        webdriver=webdriver,
+        url=url,
+        auto_load=False,
+    )
+
+    log_window = LogWindow(
+        main_window=window,
+        webdriver=webdriver,
+        url=url,
+    )
+
+    def on_app_quit() -> None:
+        try:
+            logger.info("Завершение приложения")
+            webdriver.quit()
+            logger.info("WebDriver закрыт")
+        except Exception as e:
+            logger.exception(f"Ошибка при закрытии WebDriver: {e}")
+
+    app.aboutToQuit.connect(on_app_quit)
+
+    log_window.show()
+    logger.info("Окно логов показано")
+
+    return app.exec()
 
 
-for campaign in campaigns:
-    campaign.items.sort(key=lambda x: x.bid, reverse=True)
-
-for campaign in campaigns:
-    if campaign.status != status.get('running'):
-        continue
-
-    cat = {}
-    for item in campaign.items:
-        if not item.quantity:
-            continue
-        cat.setdefault(item.category_id, 0)
-        cat[item.category_id] += 1
-        tasks.append(Task(
-            campaign_id=campaign.campaign_id,
-            sku=item.sku,
-            category_id=item.category_id,
-            region=campaign.regions,
-            keywords=item.keywords,
-            bid=item.bid,
-            limit=4000.0 if any([key in item.category.lower() for key in ('кофе', 'пылесос', 'грили')]) else 2000.0,
-            position=cat[item.category_id]
-        ))
-
-webdriver.bidder(tasks)
-time_end = time.time()
-print(f'Затрачено {time_end - time_start}')
-# webdriver.quit()
+if __name__ == "__main__":
+    raise SystemExit(main())
