@@ -1,5 +1,6 @@
 .idea/
 config.py
+campaign_state.json
 /.venv/
 /log/
 /dist*/

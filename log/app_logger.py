@@ -17,7 +17,7 @@ class GuiCallbackHandler(logging.Handler):
         try:
             message = self.format(record)
             self._callback(message)
-        except Exception:
+        except: # noqa
             pass
 
 

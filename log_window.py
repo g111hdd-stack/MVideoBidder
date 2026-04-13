@@ -1,13 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QThread, Signal, Qt, QTimer
-from PySide6.QtWidgets import (
-    QLabel,
-    QMainWindow,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QLabel, QMainWindow, QTextEdit, QVBoxLayout, QWidget
 
 
 class LogWorker(QObject):
@@ -61,7 +55,7 @@ class LogWindow(QMainWindow):
         layout = QVBoxLayout(root)
 
         self.title_label = QLabel("Статус запуска:")
-        self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
@@ -95,7 +89,7 @@ class LogWindow(QMainWindow):
     def on_finished(self, campaigns) -> None:
         rows = self.main_window.campaigns_to_rows(campaigns)
         self.main_window.model.set_rows(rows)
-        self.main_window._fill_position_widgets()
+        self.main_window.fill_position_widgets()
         self.main_window.save_table_state()
 
         self.main_window.show()

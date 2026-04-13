@@ -1,11 +1,12 @@
-import json
 import re
+import json
 import logging
+
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView,
-                               QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox)
+from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
 
@@ -16,6 +17,7 @@ TABLE_HEADERS = [
     "SKU",
     "Название товара",
     "Категория товара",
+    "Остаток",
     "Ставка",
     "Лимит ставки",
     "Позиция",
@@ -27,9 +29,10 @@ STATUS_COLUMN = 2
 SKU_COLUMN = 3
 ITEM_NAME_COLUMN = 4
 CATEGORY_COLUMN = 5
-BID_COLUMN = 6
-LIMIT_COLUMN = 7
-POSITION_COLUMN = 8
+QUANTITY_COLUMN = 6
+BID_COLUMN = 7
+LIMIT_COLUMN = 8
+POSITION_COLUMN = 9
 
 logger = logging.getLogger("mvideo_bidder")
 
@@ -50,14 +53,14 @@ class CampaignTableModel(QAbstractTableModel):
             return 0
         return len(TABLE_HEADERS)
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
-        if role != Qt.DisplayRole:
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
             return None
-        if orientation == Qt.Horizontal:
+        if orientation == Qt.Orientation.Horizontal:
             return TABLE_HEADERS[section]
         return str(section + 1)
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
 
@@ -70,6 +73,7 @@ class CampaignTableModel(QAbstractTableModel):
             SKU_COLUMN: "sku",
             ITEM_NAME_COLUMN: "item_name",
             CATEGORY_COLUMN: "category",
+            QUANTITY_COLUMN: "quantity",
             BID_COLUMN: "bid",
             LIMIT_COLUMN: "limit",
             POSITION_COLUMN: "position",
@@ -78,30 +82,31 @@ class CampaignTableModel(QAbstractTableModel):
         key = column_map.get(index.column())
         value = row.get(key, "")
 
-        if role == Qt.DisplayRole:
+        if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == POSITION_COLUMN:
                 return ""
             return str(value)
 
-        if role == Qt.EditRole:
+        if role == Qt.ItemDataRole.EditRole:
             return value
 
-        if role == Qt.TextAlignmentRole:
-            return Qt.AlignCenter
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return Qt.AlignmentFlag.AlignCenter
 
         return None
 
     def flags(self, index: QModelIndex):
         if not index.isValid():
-            return Qt.NoItemFlags
+            return Qt.ItemFlag.NoItemFlags
 
-        flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
+        flags = Qt.ItemFlag.ItemIsSelectable
+        flags |=  Qt.ItemFlag.ItemIsEnabled
         if index.column() in (LIMIT_COLUMN, POSITION_COLUMN):
-            flags |= Qt.ItemIsEditable
+            flags |= Qt.ItemFlag.ItemIsEditable
         return flags
 
-    def setData(self, index: QModelIndex, value, role: int = Qt.EditRole):
-        if not index.isValid() or role != Qt.EditRole:
+    def setData(self, index: QModelIndex, value, role: int = Qt.ItemDataRole.EditRole):
+        if not index.isValid() or role != Qt.ItemDataRole.EditRole:
             return False
 
         row = self._rows[index.row()]
@@ -113,7 +118,7 @@ class CampaignTableModel(QAbstractTableModel):
         else:
             return False
 
-        self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.EditRole])
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
 
         if self._on_change is not None:
             self._on_change()
@@ -150,7 +155,10 @@ class CycleIntervalDialog(QDialog):
         self.note_label = QLabel("Минимальное значение: 2 минуты")
         layout.addWidget(self.note_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox()
+        std = QDialogButtonBox.StandardButton.Ok
+        std |= QDialogButtonBox.StandardButton.Cancel
+        buttons.setStandardButtons(std)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -193,7 +201,6 @@ class MainWindow(QMainWindow):
         self.refresh_button = QPushButton("Обновить")
         self.interval_button = QPushButton("Интервал: 2 мин")
 
-
         self.start_button.clicked.connect(self.start_bidder)
         self.stop_button.clicked.connect(self.stop_bidder)
         self.refresh_button.clicked.connect(self.refresh_from_cabinet)
@@ -208,12 +215,10 @@ class MainWindow(QMainWindow):
         self.table = QTableView()
         self.table.setModel(self.model)
 
-        ...
-
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableView.SelectItems)
-        self.table.setSelectionMode(QTableView.SingleSelection)
+        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
+        self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(False)
 
         self.table.setStyleSheet("""
@@ -229,22 +234,25 @@ class MainWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
 
-        header.setSectionResizeMode(ID_COLUMN, QHeaderView.Fixed)
-        header.setSectionResizeMode(CAMPAIGN_NAME_COLUMN, QHeaderView.Stretch)
-        header.setSectionResizeMode(STATUS_COLUMN, QHeaderView.Fixed)
-        header.setSectionResizeMode(SKU_COLUMN, QHeaderView.Fixed)
-        header.setSectionResizeMode(ITEM_NAME_COLUMN, QHeaderView.Stretch)
-        header.setSectionResizeMode(CATEGORY_COLUMN, QHeaderView.Stretch)
-        header.setSectionResizeMode(BID_COLUMN, QHeaderView.Fixed)
-        header.setSectionResizeMode(LIMIT_COLUMN, QHeaderView.Fixed)
-        header.setSectionResizeMode(POSITION_COLUMN, QHeaderView.Fixed)
+        header.setSectionResizeMode(ID_COLUMN, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(CAMPAIGN_NAME_COLUMN, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(STATUS_COLUMN, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(SKU_COLUMN, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(ITEM_NAME_COLUMN, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(CATEGORY_COLUMN, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QUANTITY_COLUMN, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(BID_COLUMN, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(LIMIT_COLUMN, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(POSITION_COLUMN, QHeaderView.ResizeMode.Fixed)
 
-        self.table.setColumnWidth(ID_COLUMN, 120)
-        self.table.setColumnWidth(STATUS_COLUMN, 160)
-        self.table.setColumnWidth(SKU_COLUMN, 100)
+        header.setMinimumSectionSize(90)
+
+        self.table.setColumnWidth(ID_COLUMN, 90)
+        self.table.setColumnWidth(SKU_COLUMN, 90)
+        self.table.setColumnWidth(QUANTITY_COLUMN, 90)
         self.table.setColumnWidth(BID_COLUMN, 90)
-        self.table.setColumnWidth(LIMIT_COLUMN, 110)
-        self.table.setColumnWidth(POSITION_COLUMN, 60)
+        self.table.setColumnWidth(LIMIT_COLUMN, 90)
+        self.table.setColumnWidth(POSITION_COLUMN, 90)
 
         main_layout.addLayout(button_layout)
         main_layout.addWidget(self.table)
@@ -265,6 +273,7 @@ class MainWindow(QMainWindow):
                     "category_id": int(row["category_id"]),
                     "region": list(row["region"]),
                     "keywords": list(row["keywords"]),
+                    "quantity": list(row["quantity"]),
                     "bid": float(row["bid"]),
                     "limit": float(row["limit"]),
                     "position": int(row["position"]),
@@ -298,6 +307,7 @@ class MainWindow(QMainWindow):
                 "category_id": 0,
                 "region": [],
                 "keywords": [],
+                "quantity": 0,
                 "bid": 0.0,
                 "limit": 0.0,
                 "position": 0,
@@ -305,7 +315,7 @@ class MainWindow(QMainWindow):
 
         rows = self.apply_saved_state(rows)
         self.model.set_rows(rows)
-        self._fill_position_widgets()
+        self.fill_position_widgets()
 
     def _clear_position_widgets(self) -> None:
         for row in range(self.model.rowCount()):
@@ -314,7 +324,7 @@ class MainWindow(QMainWindow):
             if widget is not None:
                 widget.deleteLater()
 
-    def _fill_position_widgets(self) -> None:
+    def fill_position_widgets(self) -> None:
         self._clear_position_widgets()
 
         for row in range(self.model.rowCount()):
@@ -323,7 +333,7 @@ class MainWindow(QMainWindow):
             combo = QComboBox(self.table)
             combo.addItems(["0", "1", "2", "3", "4"])
             combo.setMaxVisibleItems(5)
-            combo.setCurrentText(str(self.model.data(index, Qt.EditRole) or "0"))
+            combo.setCurrentText(str(self.model.data(index, Qt.ItemDataRole.EditRole) or "0"))
             combo.currentTextChanged.connect(
                 lambda value, current_row=row: self._on_position_changed(current_row, value)
             )
@@ -344,21 +354,21 @@ class MainWindow(QMainWindow):
                 self,
                 "Дублирующаяся позиция",
                 (
-                    f"Позиция {new_position} уже занята для этой кампании и категории.\n"
-                    f"Позиции 1–4 должны быть уникальны в рамках campaign_id + category_id."
+                    f"Позиция {new_position} уже занята для этой РК и Категории.\n"
+                    f"Позиции 1–4 должны быть уникальны в рамках РК и Категории"
                 ),
             )
 
             index = self.model.index(row, POSITION_COLUMN)
             widget = self.table.indexWidget(index)
-            if widget is not None:
+            if isinstance(widget, QComboBox):
                 widget.blockSignals(True)
                 widget.setCurrentText(str(old_position))
                 widget.blockSignals(False)
             return
 
         index = self.model.index(row, POSITION_COLUMN)
-        self.model.setData(index, value, Qt.EditRole)
+        self.model.setData(index, value, Qt.ItemDataRole.EditRole)
 
     def _has_position_conflict(self, row: int, new_position: int) -> bool:
         if new_position == 0:
@@ -409,27 +419,26 @@ class MainWindow(QMainWindow):
                     "category": str(item.category or ""),
                     "category_id": int(item.category_id),
                     "keywords": list(item.keywords),
+                    "quantity": int(item.quantity),
                     "bid": float(item.bid),
                     "limit": 0.0,
                     "position": 0,
                 })
 
         return self.apply_saved_state(rows)
+
     def load_campaigns(self) -> None:
         try:
             self.webdriver.load_url(self.url)
             campaigns = self.webdriver.bidder_info()
             rows = self.campaigns_to_rows(campaigns)
 
-            # print("Кампаний:", len(campaigns))
-            # print("Строк для таблицы:", len(rows))
-
             if not rows:
                 QMessageBox.information(self, "Информация", "Кампании не найдены")
                 return
 
             self.model.set_rows(rows)
-            self._fill_position_widgets()
+            self.fill_position_widgets()
             self.save_table_state()
 
         except Exception as e:
@@ -438,7 +447,8 @@ class MainWindow(QMainWindow):
     def save_table_state(self) -> None:
         self.save_json_state(self.model.get_rows(), self.collect_user_state())
 
-    def _build_row_key(self, row: dict) -> str:
+    @staticmethod
+    def _build_row_key(row: dict) -> str:
         return f'{row["campaign_id"]}::{row["sku"]}'
 
     def build_tasks_from_json(self) -> list[Task]:
@@ -450,6 +460,10 @@ class MainWindow(QMainWindow):
             regions = list(campaign.get("regions", []))
 
             for item in campaign.get("items", []):
+                limit = float(item.get("limit", 0.0))
+                position = int(item.get("position", 0))
+                if not all([limit, position]):
+                    continue
                 tasks.append(
                     Task(
                         campaign_id=campaign_id,
@@ -458,8 +472,8 @@ class MainWindow(QMainWindow):
                         region=regions,
                         keywords=list(item.get("keywords", [])),
                         bid=float(item.get("bid", 0.0)),
-                        limit=float(item.get("limit", 0.0)),
-                        position=int(item.get("position", 0)),
+                        limit=limit,
+                        position=position,
                     )
                 )
 
@@ -517,6 +531,7 @@ class MainWindow(QMainWindow):
                     "category": str(row.get("category", "")),
                     "category_id": int(row.get("category_id", 0)),
                     "keywords": list(row.get("keywords", [])),
+                    "quantity": int(row.get("quantity", 0)),
                     "bid": float(row.get("bid", 0.0)),
                     "limit": limit,
                     "position": position,
@@ -531,7 +546,7 @@ class MainWindow(QMainWindow):
                 return f'{prefix}[{", ".join(numbers)}]'
 
             text = re.sub(
-                r'("regions": )\[\n(.*?)\n\s*\]',
+                r'("regions": )\[\n(.*?)\n\s*]',
                 compact_region,
                 text,
                 flags=re.DOTALL,
@@ -592,7 +607,7 @@ class MainWindow(QMainWindow):
 
             rows_for_table = self.apply_user_state_to_rows(fresh_rows, user_state)
             self.model.set_rows(rows_for_table)
-            self._fill_position_widgets()
+            self.fill_position_widgets()
 
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", str(e))
@@ -620,7 +635,7 @@ class MainWindow(QMainWindow):
 
             rows_for_table = self.apply_user_state_to_rows(fresh_rows, cycle_user_state)
             self.model.set_rows(rows_for_table)
-            self._fill_position_widgets()
+            self.fill_position_widgets()
 
         except Exception as e:
             logger.exception(f"Ошибка цикла bidder: {e}")
@@ -642,7 +657,7 @@ class MainWindow(QMainWindow):
         current_minutes = max(2, self.cycle_interval_ms // 60000)
         dialog = CycleIntervalDialog(current_minutes=current_minutes, parent=self)
 
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         minutes = dialog.get_minutes()

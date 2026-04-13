@@ -315,7 +315,7 @@ class WebDriver:
                     timeout=30,
                 )
                 return response.json()
-            except:
+            except: # noqa
                 continue
         return []
 
@@ -331,7 +331,7 @@ class WebDriver:
                     timeout=30,
                 )
                 return response.json()
-            except:
+            except: # noqa
                 continue
         return []
 
@@ -348,7 +348,7 @@ class WebDriver:
                     timeout=30,
                 )
                 return response.json()
-            except:
+            except: # noqa
                 continue
         return {}
 
@@ -369,7 +369,7 @@ class WebDriver:
                     timeout=30,
                 )
                 return response.json()
-            except:
+            except: # noqa
                 continue
         return []
 
@@ -387,11 +387,12 @@ class WebDriver:
                 )
                 self.log(f"{self.log_startswith}Ответ change_bid: status_code={response.status_code}")
                 return response.status_code == 201
-            except:
+            except: # noqa
                 continue
         return False
 
     def bidder_info(self) -> list[Campaign]:
+        self.log(f"{self.log_startswith}Сбор данных")
         campaigns: list[dict] = self.get_campaigns()
         campaigns: list[Campaign] = [Campaign.from_dict(campaign) for campaign in campaigns]
 
