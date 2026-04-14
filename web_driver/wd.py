@@ -1,11 +1,10 @@
-import json
 import os
+import json
 import time
 import platform
 import requests
 import datetime
 import logging
-
 
 from typing import Type
 
@@ -44,7 +43,7 @@ def get_moscow_time(timeout: int = 60, log_api: bool = False) -> datetime.dateti
     except Exception as e:
         if not log_api:
             with suppress(Exception):
-                print(f"Ошибка при получении времени: {e}")
+                logger.info(f"Ошибка при получении времени: {e}")
         return datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=3))).replace(tzinfo=None)
 
 
@@ -84,7 +83,7 @@ class WebDriver:
 
         self.options = Options()
 
-        # self.options.add_argument("-headless")
+        self.options.add_argument("-headless")
 
         self.options.add_argument("-no-remote")
         self.options.add_argument("-profile")
@@ -443,7 +442,8 @@ class WebDriver:
         for (category_id, _), items in task_map.items():
             for item in items:
                 while item.position < 5:
-                    self.log(f"{self.log_startswith}Обработка товара: {item}")
+                    text = f"Кампания={item.campaign_id}, SKU={item.sku}, Позиция={item.position}"
+                    self.log(f"{self.log_startswith}Обработка товара: {text}")
 
                     top_bids = self.get_top_bids(item)
                     if top_bids is None:
@@ -464,16 +464,12 @@ class WebDriver:
                     )
 
                     if bid_rub > item.limit:
-                        self.log(
-                            f"{self.log_startswith}Ставка позиции {bid_rub} больше лимита {item.limit}"
-                        )
+                        self.log(f"{self.log_startswith}Ставка позиции {bid_rub} больше лимита {item.limit}")
                         for item2 in items:
                             item2.position += 1
                         continue
 
-                    self.log(
-                        f"{self.log_startswith}Смена ставки, увеличение затрат на {bid_rub - item.bid}"
-                    )
+                    self.log(f"{self.log_startswith}Смена ставки, увеличение затрат на {bid_rub - item.bid}")
 
                     rows = self.get_items(item.campaign_id)
 
@@ -494,15 +490,11 @@ class WebDriver:
                             "sku_id": sku,
                         })
 
-                    self.log(f"{self.log_startswith}Подготовлено тело запроса: {body}")
-
-                    time.sleep(2)
-
-                    # answer = self.change_bid(item.campaign_id, body)
-                    # if answer:
-                    #     self.log(f"{self.log_startswith}Смена прошла успешно")
-                    # else:
-                    #     self.log(f"{self.log_startswith}Что-то пошло не так")
+                    answer = self.change_bid(item.campaign_id, body)
+                    if answer:
+                        self.log(f"{self.log_startswith}Изменение применено: {text}")
+                    else:
+                        self.log(f"{self.log_startswith}Что-то пошло не так")
 
                     break
                 else:

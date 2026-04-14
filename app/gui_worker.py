@@ -4,16 +4,13 @@ import logging
 
 from PySide6.QtCore import QObject, Signal
 
-from domain.dtos import Task
-
-
-
+from domain.dtos import Task, Campaign
 
 logger = logging.getLogger("mvideo_bidder")
 
 
 class BaseWorker(QObject):
-    finished = Signal(list, dict)   # rows, user_state
+    finished = Signal(list, dict)
     error = Signal(str)
     log = Signal(str)
 
@@ -26,7 +23,8 @@ class BaseWorker(QObject):
     def request_stop(self) -> None:
         self._stop_requested = True
 
-    def campaigns_to_rows(self, campaigns) -> list[dict]:
+    @staticmethod
+    def campaigns_to_rows(campaigns: list[Campaign]) -> list[dict]:
         rows: list[dict] = []
 
         for campaign in campaigns:

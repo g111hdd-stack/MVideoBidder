@@ -4,7 +4,7 @@ import logging
 
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QMetaObject, QThread
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
@@ -712,15 +712,12 @@ class MainWindow(QMainWindow):
             f"Новый интервал между циклами: {minutes} мин."
         )
 
-    #---------ОКНО ЛОГИРОВАНИЯ В MAIN------------
-
     def _init_log_dock(self) -> None:
         self.log_dock = QDockWidget("Логи", self)
         self.log_dock.setObjectName("log_dock")
-        self.log_dock.setAllowedAreas(
-            Qt.DockWidgetArea.RightDockWidgetArea |
-            Qt.DockWidgetArea.BottomDockWidgetArea
-        )
+        dock = Qt.DockWidgetArea.RightDockWidgetArea
+        dock |= Qt.DockWidgetArea.BottomDockWidgetArea
+        self.log_dock.setAllowedAreas(dock)
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
@@ -745,8 +742,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         set_gui_logger_callback(None)
         super().closeEvent(event)
-
-    #---------ВОРКЕРЫ------------
 
     def _set_busy(self, busy: bool, text: str = "") -> None:
         self.worker_busy = busy
