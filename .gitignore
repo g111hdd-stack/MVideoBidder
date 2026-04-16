@@ -2,7 +2,7 @@
 config.py
 campaign_state.json
 /.venv/
-/log/
+/logs/
 /dist*/
 /build/
 /profile/

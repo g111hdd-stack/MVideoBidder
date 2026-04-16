@@ -6,7 +6,7 @@ from app.gui_main import MainWindow
 from app.log_window import LogWindow
 from web_driver.wd import WebDriver
 from database.db import DbConnection
-from log.app_logger import setup_logger
+from utils.app_logger import setup_logger
 
 
 def main() -> int:

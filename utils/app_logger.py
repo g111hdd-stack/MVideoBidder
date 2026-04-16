@@ -1,5 +1,7 @@
 import logging
 from typing import Callable
+from pathlib import Path
+from datetime import datetime
 
 
 class GuiCallbackHandler(logging.Handler):
@@ -17,7 +19,7 @@ class GuiCallbackHandler(logging.Handler):
         try:
             message = self.format(record)
             self._callback(message)
-        except: # noqa
+        except:  # noqa
             pass
 
 
@@ -39,7 +41,13 @@ def setup_logger() -> logging.Logger:
     gui_handler.setLevel(logging.INFO)
     gui_handler.setFormatter(formatter)
 
-    file_handler = logging.FileHandler("app.log", encoding="utf-8")
+    logs_dir = Path("logs")
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    log_name = datetime.now().strftime("app_%Y-%m-%d_%H-%M-%S.log")
+    log_path = logs_dir / log_name
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
 
@@ -47,6 +55,8 @@ def setup_logger() -> logging.Logger:
     logger.addHandler(gui_handler)
     logger.addHandler(file_handler)
     logger.propagate = False
+
+    logger.info(f"Лог-файл создан: {log_path}")
 
     return logger
 

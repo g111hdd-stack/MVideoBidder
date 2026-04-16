@@ -1,3 +1,4 @@
+import sys
 import os
 import json
 import time
@@ -26,8 +27,47 @@ from database.db import DbConnection
 from domain.dtos import Campaign, Item, Task
 from .create_extension_proxy import create_firefox_proxy_addon
 
+from pathlib import Path
+
 TIME_AWAIT = 10
 logger = logging.getLogger("mvideo_bidder")
+
+
+def get_app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def get_resource_dir() -> Path:
+    app_dir = get_app_dir()
+
+    candidates = [
+        app_dir,
+        app_dir / "_internal",
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return app_dir
+
+
+def get_browser_dir() -> Path:
+    resource_dir = get_resource_dir()
+
+    candidates = [
+        resource_dir / "browser",
+        get_app_dir() / "browser",
+        get_app_dir() / "_internal" / "browser",
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return resource_dir / "browser"
 
 
 def get_moscow_time(timeout: int = 60, log_api: bool = False) -> datetime.datetime:
@@ -58,8 +98,8 @@ class WebDriver:
 
     def __init__(self, market: Type[Market], db_conn: DbConnection) -> None:
         self.gui_logger = None
-        self.user = 'MVideoBidder'
-        self.base_url = 'https://sellers.mvideo.ru'
+        self.user = "MVideoBidder"
+        self.base_url = "https://sellers.mvideo.ru"
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0"
         self.db_conn = db_conn
         self.client_id = market.client_id
@@ -70,27 +110,25 @@ class WebDriver:
         self.browser_id = f"{self.phone}_{self.marketplace.marketplace.lower()}"
         self.log_startswith = f"{self.marketplace.marketplace} - {market.name_company}: "
 
-        self.profile_path = os.path.join(os.getcwd(), f"profile/{self.browser_id}")
+        app_dir = get_app_dir()
 
+        self.profile_path = str(app_dir / "profile" / self.browser_id)
         os.makedirs(self.profile_path, exist_ok=True)
 
-        self.proxy_auth_path = os.path.join(os.getcwd(), f"proxy_auth")
+        self.proxy_auth_path = str(app_dir / "proxy_auth")
         os.makedirs(self.proxy_auth_path, exist_ok=True)
 
         ext_path = create_firefox_proxy_addon(self.proxy_auth_path, self.proxy)
 
-        bit = '64' if platform.machine().endswith('64') else ''
+        bit = "64" if platform.machine().endswith("64") else ""
 
         self.options = Options()
-
         self.options.add_argument("-headless")
-
         self.options.add_argument("-no-remote")
         self.options.add_argument("-profile")
         self.options.add_argument(self.profile_path)
 
         self.options.set_preference("general.useragent.override", self.user_agent)
-
         self.options.set_preference("dom.webdriver.enabled", False)
         self.options.set_preference("useAutomationExtension", False)
         self.options.set_preference("media.peerconnection.enabled", True)
@@ -100,14 +138,66 @@ class WebDriver:
         self.options.set_preference("app.update.auto", False)
         self.options.set_preference("app.update.enabled", False)
 
-        self.options.binary_location = str(os.path.join(os.getcwd(),
-                                                        f"browser/FirefoxPortable/App/Firefox{bit}/firefox.exe"))
+        browser_candidates = [
+            app_dir / "browser",
+            app_dir / "_internal" / "browser",
+        ]
 
-        self.service = Service(executable_path=str(os.path.join(os.getcwd(), f"browser/geckodriver{bit}.exe")))
+        browser_dir = None
+        for candidate in browser_candidates:
+            if candidate.exists():
+                browser_dir = candidate
+                break
+
+        if browser_dir is None:
+            raise FileNotFoundError(
+                f"Папка browser не найдена. Проверены пути: "
+                f"{', '.join(str(p) for p in browser_candidates)}"
+            )
+
+        firefox_candidates = [
+            browser_dir / "FirefoxPortable" / "App" / f"Firefox{bit}" / "firefox.exe",
+            browser_dir / "FirefoxPortable" / "firefox.exe",
+            browser_dir / "firefox.exe",
+        ]
+
+        firefox_path = None
+        for candidate in firefox_candidates:
+            if candidate.exists():
+                firefox_path = candidate
+                break
+
+        if firefox_path is None:
+            raise FileNotFoundError(
+                f"Firefox не найден. Проверены пути: "
+                f"{', '.join(str(p) for p in firefox_candidates)}"
+            )
+
+        geckodriver_candidates = [
+            browser_dir / f"geckodriver{bit}.exe",
+            browser_dir / "geckodriver.exe",
+        ]
+
+        geckodriver_path = None
+        for candidate in geckodriver_candidates:
+            if candidate.exists():
+                geckodriver_path = candidate
+                break
+
+        if geckodriver_path is None:
+            raise FileNotFoundError(
+                f"geckodriver не найден. Проверены пути: "
+                f"{', '.join(str(p) for p in geckodriver_candidates)}"
+            )
+
+        self.options.binary_location = str(firefox_path)
+        self.service = Service(executable_path=str(geckodriver_path))
+
+        logger.info(f"Используется Firefox: {firefox_path}")
+        logger.info(f"Используется geckodriver: {geckodriver_path}")
 
         self.driver = webdriver.Firefox(service=self.service, options=self.options)
         self.driver.install_addon(ext_path, temporary=True)
-
         self.driver.maximize_window()
 
     def set_gui_logger(self, logger_callback=None) -> None:

@@ -14,10 +14,11 @@ class BaseWorker(QObject):
     error = Signal(str)
     log = Signal(str)
 
-    def __init__(self, webdriver, user_state: dict | None = None) -> None:
+    def __init__(self, webdriver, user_state: dict | None = None, cycle_interval_ms: int = 0) -> None:
         super().__init__()
         self.webdriver = webdriver
         self.user_state = user_state or {}
+        self.cycle_interval_ms = cycle_interval_ms
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -105,12 +106,10 @@ class RefreshWorker(BaseWorker):
     def run(self) -> None:
         try:
             logger.info("Обновление данных из кабинета...")
-            self.log.emit("Обновление данных из кабинета...")
             campaigns = self.webdriver.bidder_info()
 
             if self._stop_requested:
                 logger.info("Обновление данных из кабинета...")
-                self.log.emit("Обновление остановлено")
                 self.finished.emit([], self.user_state)
                 return
 
@@ -125,14 +124,13 @@ class RefreshWorker(BaseWorker):
 
 class BidderCycleWorker(BaseWorker):
     def run(self) -> None:
+        interval_minutes = self.cycle_interval_ms // 60000
         try:
             logger.info("Запуск цикла bidder...")
-            self.log.emit("Запуск цикла bidder...")
             campaigns = self.webdriver.bidder_info()
 
             if self._stop_requested:
                 logger.info("Цикл остановлен")
-                self.log.emit("Цикл остановлен")
                 self.finished.emit([], self.user_state)
                 return
 
@@ -141,11 +139,10 @@ class BidderCycleWorker(BaseWorker):
             tasks = self.build_tasks_from_rows(rows_for_table)
 
             logger.info(f"Найдено задач: {len(tasks)}")
-            self.log.emit(f"Найдено задач: {len(tasks)}")
-
             if tasks and not self._stop_requested:
                 self.webdriver.bidder(tasks)
 
+            logger.info(f"Цикл bidder завершён. Следующий запуск через {interval_minutes} мин.")
             self.finished.emit(rows_for_table, self.user_state)
 
         except Exception as e:

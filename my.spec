@@ -2,46 +2,66 @@
 
 from pathlib import Path
 from PyInstaller.building.datastruct import Tree
+import os
 import ast
-import pkg_resources
 
 block_cipher = None
 project_dir = Path(os.getcwd())
 
-# Читаем версию из config.py
-with open('config.py', 'r', encoding='utf-8') as f:
-    tree = ast.parse(f.read(), filename='config.py')
+with open("config.py", "r", encoding="utf-8") as f:
+    tree = ast.parse(f.read(), filename="config.py")
 
-VERSION = None
+VERSION = "0.0.0"
 for node in tree.body:
     if isinstance(node, ast.Assign):
         for target in node.targets:
             if getattr(target, "id", None) == "VERSION":
                 VERSION = ast.literal_eval(node.value)
 
-data_files = [
-    ('chrome.png', '.'),
-    ('info.png', '.'),
+data_files = []
+
+if (project_dir / "chrome.png").exists():
+    data_files.append((str(project_dir / "chrome.png"), "."))
+
+if (project_dir / "info.png").exists():
+    data_files.append((str(project_dir / "info.png"), "."))
+
+hiddenimports = [
+    "app.gui_main",
+    "app.gui_worker",
+    "app.log_window",
+    "database.db",
+    "database.models",
+    "domain.dtos",
+    "utils.app_logger",
+    "web_driver.wd",
+    "web_driver.create_extension_proxy",
+
+    "selenium",
+    "selenium.webdriver",
+    "selenium.webdriver.common",
+    "selenium.webdriver.common.by",
+    "selenium.webdriver.common.driver_finder",
+    "selenium.webdriver.common.options",
+    "selenium.webdriver.common.service",
+    "selenium.webdriver.common.selenium_manager",
+    "selenium.webdriver.firefox",
+    "selenium.webdriver.firefox.webdriver",
+    "selenium.webdriver.firefox.options",
+    "selenium.webdriver.firefox.service",
+    "selenium.webdriver.support",
+    "selenium.webdriver.support.ui",
+    "selenium.webdriver.support.expected_conditions",
+    "selenium.common",
+    "selenium.common.exceptions",
 ]
 
-packages = []
-with open('requirements.txt', 'r', encoding='utf-8') as f:
-    for line in f:
-        s = line.strip()
-        if not s or s.startswith('#'):
-            continue
-        try:
-            req = pkg_resources.Requirement.parse(s)
-            packages.append(str(req.project_name))
-        except Exception as e:
-            print(f"skip {s}: {e}")
-
 a = Analysis(
-    ['main.py'],
+    ["main.py"],
     pathex=[str(project_dir)],
     binaries=[],
     datas=data_files,
-    hiddenimports=packages,
+    hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
@@ -55,10 +75,9 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='ProxyBrowser ' + str(VERSION),
+    name="MVideoBidder_" + str(VERSION),
     debug=False,
-    console=False,   # True -> видеть ошибки в консоли
-    icon='chrome.png',
+    console=True,
 )
 
 coll = COLLECT(
@@ -66,9 +85,9 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    Tree(str(project_dir / 'browser'), prefix='browser'),
+    Tree(str(project_dir / "browser"), prefix="browser"),
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='ProxyBrowser',
+    name="MVideoBidder",
 )

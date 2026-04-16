@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, Q
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
-from log.app_logger import set_gui_logger_callback
+from utils.app_logger import set_gui_logger_callback
 from app.gui_worker import RefreshWorker, BidderCycleWorker
 
 TABLE_HEADERS = [
@@ -762,7 +762,8 @@ class MainWindow(QMainWindow):
         self.worker = worker_cls(
             webdriver=self.webdriver,
             user_state=user_state,
-        )
+            cycle_interval_ms=self.cycle_interval_ms)
+
         self.worker.moveToThread(self.worker_thread)
 
         self.worker_thread.started.connect(self.worker.run)
