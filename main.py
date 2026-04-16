@@ -1,12 +1,98 @@
 import sys
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QIcon
+from PySide6.QtCore import QObject, QThread, Slot
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from web_driver.wd import WebDriver
+from config import ICON_PATH
 from app.gui_main import MainWindow
 from app.log_window import LogWindow
-from database.db import DbConnection
 from utils.app_logger import setup_logger
+from app.startup_window import StartupWindow
+from app.startup_worker import StartupWorker
+
+
+class StartupController(QObject):
+    def __init__(self, app: QApplication, logger) -> None:
+        super().__init__()
+        self.app = app
+        self.logger = logger
+
+        self.startup_window = StartupWindow()
+        self.startup_thread = QThread()
+        self.startup_worker = StartupWorker()
+
+        self.db_conn = None
+        self.webdriver = None
+        self.url = ""
+        self.window = None
+        self.log_window = None
+
+        self.startup_worker.moveToThread(self.startup_thread)
+
+        self.startup_thread.started.connect(self.startup_worker.run)
+        self.startup_worker.progress.connect(self.on_progress)
+        self.startup_worker.finished.connect(self.on_finished)
+        self.startup_worker.error.connect(self.on_error)
+
+        self.startup_worker.finished.connect(self.startup_thread.quit)
+        self.startup_worker.error.connect(self.startup_thread.quit)
+
+        self.startup_thread.finished.connect(self.startup_worker.deleteLater)
+        self.startup_thread.finished.connect(self.startup_thread.deleteLater)
+
+    def start(self) -> None:
+        self.startup_window.show()
+        self.startup_thread.start()
+
+    @Slot(str)
+    def on_progress(self, text: str) -> None:
+        self.startup_window.set_status(text)
+        self.logger.info(text)
+
+    @Slot(object, object, str)
+    def on_finished(self, db_conn, webdriver, url: str) -> None:
+        self.logger.info("Инициализация завершена")
+
+        self.db_conn = db_conn
+        self.webdriver = webdriver
+        self.url = url
+
+        self.window = MainWindow(
+            db_conn=self.db_conn,
+            webdriver=self.webdriver,
+            url=self.url,
+            auto_load=False,
+        )
+
+        self.log_window = LogWindow(
+            main_window=self.window,
+            webdriver=self.webdriver,
+            url=self.url,
+        )
+
+        self.app.aboutToQuit.connect(self.on_app_quit)
+
+        self.startup_window.close()
+        self.log_window.show()
+        self.logger.info("Окно логов показано")
+
+    @Slot(str)
+    def on_error(self, text: str) -> None:
+        self.logger.exception(f"Ошибка запуска: {text}")
+        self.startup_window.close()
+        QMessageBox.critical(None, "Ошибка запуска", text)
+        self.app.quit()
+
+    @Slot()
+    def on_app_quit(self) -> None:
+        try:
+            self.logger.info("Завершение приложения")
+            if self.webdriver is not None:
+                self.webdriver.quit()
+                self.logger.info("WebDriver закрыт")
+        except Exception as e:
+            self.logger.exception(f"Ошибка при закрытии WebDriver: {e}")
 
 
 def main() -> int:
@@ -15,43 +101,14 @@ def main() -> int:
 
     app = QApplication(sys.argv)
 
-    db_conn = DbConnection()
-    market = db_conn.get_market()
-    url = market.marketplace_info.link
+    app.setWindowIcon(QIcon(ICON_PATH))
 
-    logger.info("Данные маркетплейса получены")
+    controller = StartupController(app, logger)
+    controller.start()
 
-    webdriver = WebDriver(market, db_conn)
-    logger.info("WebDriver создан")
-
-    window = MainWindow(
-        db_conn=db_conn,
-        webdriver=webdriver,
-        url=url,
-        auto_load=False,
-    )
-
-    log_window = LogWindow(
-        main_window=window,
-        webdriver=webdriver,
-        url=url,
-    )
-
-    def on_app_quit() -> None:
-        try:
-            logger.info("Завершение приложения")
-            webdriver.quit()
-            logger.info("WebDriver закрыт")
-        except Exception as e:
-            logger.exception(f"Ошибка при закрытии WebDriver: {e}")
-
-    app.aboutToQuit.connect(on_app_quit)
-
-    log_window.show()
-    logger.info("Окно логов показано")
+    app._startup_controller = controller
 
     return app.exec()
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

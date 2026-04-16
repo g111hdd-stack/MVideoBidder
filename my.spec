@@ -11,25 +11,17 @@ project_dir = Path(os.getcwd())
 with open("config.py", "r", encoding="utf-8") as f:
     tree = ast.parse(f.read(), filename="config.py")
 
-VERSION = "0.0.0"
-for node in tree.body:
-    if isinstance(node, ast.Assign):
-        for target in node.targets:
-            if getattr(target, "id", None) == "VERSION":
-                VERSION = ast.literal_eval(node.value)
-
 data_files = []
 
-if (project_dir / "chrome.png").exists():
-    data_files.append((str(project_dir / "chrome.png"), "."))
-
-if (project_dir / "info.png").exists():
-    data_files.append((str(project_dir / "info.png"), "."))
+if (project_dir / "icon.png").exists():
+    data_files.append((str(project_dir / "icon.png"), "."))
 
 hiddenimports = [
     "app.gui_main",
     "app.gui_worker",
     "app.log_window",
+    "app.startup_window",
+    "app.startup_worker",
     "database.db",
     "database.models",
     "domain.dtos",
@@ -75,9 +67,10 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="MVideoBidder_" + str(VERSION),
+    name="MVideoBidder",
     debug=False,
-    console=True,
+    console=False,
+    icon="app.ico"
 )
 
 coll = COLLECT(

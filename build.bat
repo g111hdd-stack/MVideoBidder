@@ -14,16 +14,8 @@ if errorlevel 1 (
     goto :end
 )
 
-set "DIST=dist"
-set "APPDIR="
+set "APPDIR=dist"
 
-for /d %%D in ("%DIST%\ProxyBrowser*") do (
-    set "APPDIR=%%~fD"
-    goto :found_app
-)
-
-echo Не найдена папка приложения в dist\ProxyBrowser*.
-goto :end
 
 :found_app
 echo Найдена папка приложения: "%APPDIR%"
