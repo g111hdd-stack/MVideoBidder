@@ -22,6 +22,7 @@ class BaseWorker(QObject):
         self._stop_requested = False
 
     def request_stop(self) -> None:
+        logger.info("Bidder остановлен.")
         self._stop_requested = True
 
     @staticmethod
@@ -126,7 +127,7 @@ class BidderCycleWorker(BaseWorker):
     def run(self) -> None:
         interval_minutes = self.cycle_interval_ms // 60000
         try:
-            logger.info("Запуск цикла bidder...")
+            logger.info("Запуск цикла Bidder...")
             campaigns = self.webdriver.bidder_info()
 
             if self._stop_requested:
@@ -142,7 +143,7 @@ class BidderCycleWorker(BaseWorker):
             if tasks and not self._stop_requested:
                 self.webdriver.bidder(tasks)
 
-            logger.info(f"Цикл bidder завершён. Следующий запуск через {interval_minutes} мин.")
+            logger.info(f"Цикл Bidder завершён. Следующий запуск через {interval_minutes} мин.")
             self.finished.emit(rows_for_table, self.user_state)
 
         except Exception as e:

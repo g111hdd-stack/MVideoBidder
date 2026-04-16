@@ -2,9 +2,9 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from web_driver.wd import WebDriver
 from app.gui_main import MainWindow
 from app.log_window import LogWindow
-from web_driver.wd import WebDriver
 from database.db import DbConnection
 from utils.app_logger import setup_logger
 

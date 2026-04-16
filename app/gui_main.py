@@ -4,7 +4,7 @@ import logging
 
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
@@ -148,13 +148,13 @@ class CycleIntervalDialog(QDialog):
         layout.addWidget(info_label)
 
         self.spin_box = QSpinBox()
-        self.spin_box.setMinimum(5)
+        self.spin_box.setMinimum(2)
         self.spin_box.setMaximum(1440)
         self.spin_box.setValue(max(2, current_minutes))
         self.spin_box.setSuffix(" мин")
         layout.addWidget(self.spin_box)
 
-        self.note_label = QLabel("Минимальное значение: 5 минуты")
+        self.note_label = QLabel("Минимальное значение: 2 минуты")
         layout.addWidget(self.note_label)
 
         buttons = QDialogButtonBox()
@@ -169,6 +169,8 @@ class CycleIntervalDialog(QDialog):
         return int(self.spin_box.value())
 
 class MainWindow(QMainWindow):
+    gui_log_signal = Signal(str)
+
     def __init__(self, db_conn, webdriver=None, url: str = "", auto_load: bool = True) -> None:
         super().__init__()
         self.setWindowTitle("MVideo Bidder")
@@ -182,8 +184,9 @@ class MainWindow(QMainWindow):
         self.settings_path = Path("app_settings.json")
 
         self.is_running = False
-        self.cycle_interval_ms = 5 * 60 * 1000
+        self.cycle_interval_ms = 2 * 60 * 1000
         self.bidder_timer = QTimer(self)
+        self.bidder_timer.setSingleShot(True)
         self.bidder_timer.timeout.connect(self.run_bidder_cycle)
 
         self.worker_thread = None
@@ -195,7 +198,8 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._load_app_settings()
         self._init_log_dock()
-        set_gui_logger_callback(self.append_log)
+        self.gui_log_signal.connect(self.append_log)
+        set_gui_logger_callback(self.gui_log_signal.emit)
         self._load_empty_rows()
         if self.auto_load:
             QTimer.singleShot(0, self.load_campaigns)
@@ -209,7 +213,7 @@ class MainWindow(QMainWindow):
         self.run_button = QPushButton("Запустить")
         self.refresh_button = QPushButton("Обновить")
         self.logs_button = QPushButton("Показать логи")
-        self.interval_button = QPushButton("Интервал: 5 мин")
+        self.interval_button = QPushButton("Интервал: 2 мин")
         self.status_label = QLabel("Цикл остановлен")
 
         self.run_button.clicked.connect(self.toggle_bidder)
@@ -609,8 +613,8 @@ class MainWindow(QMainWindow):
     def _load_app_settings(self) -> None:
         settings = self.load_app_settings()
 
-        minutes = int(settings.get("cycle_interval_minutes", 5))
-        minutes = max(5, minutes)
+        minutes = int(settings.get("cycle_interval_minutes", 2))
+        minutes = max(2, minutes)
 
         self.cycle_interval_ms = minutes * 60 * 1000
 
@@ -642,7 +646,6 @@ class MainWindow(QMainWindow):
         self.is_running = True
         self.run_button.setText("Остановить")
         self.status_label.setText("Цикл запущен")
-        self.bidder_timer.start(self.cycle_interval_ms)
         self.run_bidder_cycle()
 
     def stop_bidder(self) -> None:
@@ -653,6 +656,8 @@ class MainWindow(QMainWindow):
 
         if self.worker is not None:
             self.worker.request_stop()
+        else:
+            logger.info("Bidder остановлен.")
 
     def toggle_bidder(self) -> None:
         if self.is_running:
@@ -687,7 +692,7 @@ class MainWindow(QMainWindow):
         return rows
 
     def open_interval_dialog(self) -> None:
-        current_minutes = max(5, self.cycle_interval_ms // 60000)
+        current_minutes = max(2, self.cycle_interval_ms // 60000)
         dialog = CycleIntervalDialog(current_minutes=current_minutes, parent=self)
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -704,13 +709,18 @@ class MainWindow(QMainWindow):
         self.save_app_settings()
 
         if self.is_running:
-            self.bidder_timer.start(self.cycle_interval_ms)
-
-        QMessageBox.information(
-            self,
-            "Интервал обновлён",
-            f"Новый интервал между циклами: {minutes} мин."
-        )
+            QMessageBox.information(
+                self,
+                "Интервал обновлён",
+                f"Новый интервал: {minutes} мин.\n"
+                f"Он будет применён после текущего цикла или текущего ожидания."
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Интервал обновлён",
+                f"Новый интервал между циклами: {minutes} мин."
+            )
 
     def _init_log_dock(self) -> None:
         self.log_dock = QDockWidget("Логи", self)
@@ -741,6 +751,17 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         set_gui_logger_callback(None)
+
+        self.is_running = False
+        self.bidder_timer.stop()
+
+        if self.worker is not None:
+            self.worker.request_stop()
+
+        if self.worker_thread is not None:
+            self.worker_thread.quit()
+            self.worker_thread.wait(3000)
+
         super().closeEvent(event)
 
     def _set_busy(self, busy: bool, text: str = "") -> None:
@@ -756,13 +777,17 @@ class MainWindow(QMainWindow):
         if self.worker_busy:
             return
 
+        if self.worker_thread is not None:
+            return
+
         user_state = self.collect_user_state()
 
         self.worker_thread = QThread(self)
         self.worker = worker_cls(
             webdriver=self.webdriver,
             user_state=user_state,
-            cycle_interval_ms=self.cycle_interval_ms)
+            cycle_interval_ms=self.cycle_interval_ms
+        )
 
         self.worker.moveToThread(self.worker_thread)
 
@@ -792,12 +817,19 @@ class MainWindow(QMainWindow):
     def _cleanup_worker(self) -> None:
         self._set_busy(False)
 
-        if self.worker is not None:
-            self.worker.deleteLater()
-            self.worker = None
+        old_worker = self.worker
+        old_thread = self.worker_thread
 
-        if self.worker_thread is not None:
-            self.worker_thread.deleteLater()
-            self.worker_thread = None
+        self.worker = None
+        self.worker_thread = None
 
+        if old_worker is not None:
+            old_worker.deleteLater()
 
+        if old_thread is not None:
+            old_thread.deleteLater()
+
+        if self.is_running:
+            self.bidder_timer.start(self.cycle_interval_ms)
+            minutes = self.cycle_interval_ms // 60000
+            self.status_label.setText(f"Ожидание следующего цикла: {minutes} мин")

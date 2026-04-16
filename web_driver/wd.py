@@ -1,14 +1,14 @@
-import sys
 import os
+import sys
 import json
 import time
+import logging
 import platform
 import requests
 import datetime
-import logging
 
 from typing import Type
-
+from pathlib import Path
 from selenium import webdriver
 from contextlib import suppress
 
@@ -27,7 +27,6 @@ from database.db import DbConnection
 from domain.dtos import Campaign, Item, Task
 from .create_extension_proxy import create_firefox_proxy_addon
 
-from pathlib import Path
 
 TIME_AWAIT = 10
 logger = logging.getLogger("mvideo_bidder")
@@ -283,7 +282,7 @@ class WebDriver:
                     expected_conditions.element_to_be_clickable(
                         (By.XPATH, "//button[contains(., 'Подтвердить')]")))
 
-                self.log(f"{self.log_startswith} Нажимаем на кнопку подтвердить ")
+                self.log(f"{self.log_startswith}Нажимаем на кнопку подтвердить ")
 
                 button_confirm.click()
                 time.sleep(TIME_AWAIT)
