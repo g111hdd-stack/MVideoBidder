@@ -122,7 +122,7 @@ class WebDriver:
         bit = "64" if platform.machine().endswith("64") else ""
 
         self.options = Options()
-        self.options.add_argument("-headless")
+        # self.options.add_argument("-headless")
         self.options.add_argument("-no-remote")
         self.options.add_argument("-profile")
         self.options.add_argument(self.profile_path)
@@ -529,15 +529,22 @@ class WebDriver:
             value.sort(key=lambda x: x.position)
 
         for (category_id, _), items in task_map.items():
+            default_bids = [15, 14, 13, 12]
             for item in items:
                 while item.position < 5:
                     text = f"Кампания={item.campaign_id}, SKU={item.sku}, Позиция={item.position}"
                     self.log(f"{self.log_startswith}Обработка товара: {text}")
 
                     top_bids = self.get_top_bids(item)
+                    print(top_bids)
+                    count = len(top_bids) - max([len(items), max([i.position for i in items if i.position < 5])])
                     if top_bids is None:
                         self.log(f"{self.log_startswith}Нет данных о ставках")
                         break
+                    elif len(top_bids) < 4 and count < 0:
+                        top_bids.extend(default_bids[count:])
+
+                    print(top_bids)
 
                     format_bid = int(item.bid / 10)
                     pos_bid = top_bids[item.position - 1]
@@ -558,7 +565,9 @@ class WebDriver:
                             item2.position += 1
                         continue
 
-                    self.log(f"{self.log_startswith}Смена ставки, увеличение затрат на {bid_rub - item.bid}")
+                    delta = bid_rub - item.bid
+
+                    self.log(f"{self.log_startswith}Смена ставки, изменение затрат на {'+' if delta > 0 else ''}{delta}")
 
                     rows = self.get_items(item.campaign_id)
 
