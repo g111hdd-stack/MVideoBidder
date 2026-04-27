@@ -1,6 +1,6 @@
 from typing import Any
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 status = {
