@@ -15,6 +15,7 @@ from utils.app_logger import set_gui_logger_callback
 from app.gui_worker import RefreshWorker, BidderCycleWorker
 
 TABLE_HEADERS = [
+    "Магазин",
     "Рекламное ID",
     "Название РК",
     "Статус РК",
@@ -26,17 +27,17 @@ TABLE_HEADERS = [
     "Лимит ставки",
     "Позиция",
 ]
-
-ID_COLUMN = 0
-CAMPAIGN_NAME_COLUMN = 1
-STATUS_COLUMN = 2
-SKU_COLUMN = 3
-ITEM_NAME_COLUMN = 4
-CATEGORY_COLUMN = 5
-QUANTITY_COLUMN = 6
-BID_COLUMN = 7
-LIMIT_COLUMN = 8
-POSITION_COLUMN = 9
+SHOP_COLUMN = 0
+ID_COLUMN = 1
+CAMPAIGN_NAME_COLUMN = 2
+STATUS_COLUMN = 3
+SKU_COLUMN = 4
+ITEM_NAME_COLUMN = 5
+CATEGORY_COLUMN = 6
+QUANTITY_COLUMN = 7
+BID_COLUMN = 8
+LIMIT_COLUMN = 9
+POSITION_COLUMN = 10
 
 logger = logging.getLogger("mvideo_bidder")
 
@@ -71,6 +72,7 @@ class CampaignTableModel(QAbstractTableModel):
         row = self._rows[index.row()]
 
         column_map = {
+            SHOP_COLUMN: "shop",
             ID_COLUMN: "campaign_id",
             CAMPAIGN_NAME_COLUMN: "campaign_name",
             STATUS_COLUMN: "status",
@@ -173,13 +175,13 @@ class CycleIntervalDialog(QDialog):
 class MainWindow(QMainWindow):
     gui_log_signal = Signal(str)
 
-    def __init__(self, db_conn, webdriver=None, url: str = "", auto_load: bool = True) -> None:
+    def __init__(self, db_conn, webdrivers: list | None = None, url: str = "", auto_load: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(f"MVideo Bidder v{APP_VERSION}")
         self.resize(1450, 700)
 
         self.db_conn = db_conn
-        self.webdriver = webdriver
+        self.webdrivers = webdrivers or []
         self.url = url
         self.auto_load = auto_load
         self.storage_path = Path("campaign_state.json")
@@ -318,6 +320,8 @@ class MainWindow(QMainWindow):
         rows = []
         for _ in range(10):
             rows.append({
+                "client_id": "",
+                "shop": "",
                 "campaign_id": 0,
                 "campaign_name": "",
                 "status": "",
@@ -326,6 +330,7 @@ class MainWindow(QMainWindow):
                 "category": "",
                 "category_id": 0,
                 "region": [],
+                "regions": [],
                 "keywords": [],
                 "quantity": 0,
                 "bid": 0.0,
@@ -395,6 +400,7 @@ class MainWindow(QMainWindow):
             return False
 
         current_row = self.model.get_rows()[row]
+        client_id = str(current_row.get("client_id", ""))
         campaign_id = int(current_row.get("campaign_id", 0))
         category_id = int(current_row.get("category_id", 0))
 
@@ -403,7 +409,8 @@ class MainWindow(QMainWindow):
                 continue
 
             if (
-                    int(other_row.get("campaign_id", 0)) == campaign_id
+                    str(other_row.get("client_id", "")) == client_id
+                    and int(other_row.get("campaign_id", 0)) == campaign_id
                     and int(other_row.get("category_id", 0)) == category_id
                     and int(other_row.get("position", 0)) == new_position
             ):
@@ -411,14 +418,24 @@ class MainWindow(QMainWindow):
 
         return False
 
-
-
     def campaigns_to_rows(self, campaigns) -> list[dict]:
+        if not self.webdrivers:
+            return []
+
+        return self.campaigns_to_rows_for_webdriver(self.webdrivers[0], campaigns)
+
+    def campaigns_to_rows_for_webdriver(self, webdriver, campaigns) -> list[dict]:
         rows: list[dict] = []
+
+        client_id = str(getattr(webdriver, "client_id", "") or "")
+        shop_name = str(getattr(webdriver, "name_company", "") or "")
 
         for campaign in campaigns:
             for item in campaign.items:
                 rows.append({
+                    "client_id": client_id,
+                    "shop": shop_name,
+
                     "campaign_id": int(campaign.campaign_id),
                     "campaign_name": str(campaign.name),
                     "campaign_type": str(campaign.campaign_type),
@@ -469,7 +486,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _build_row_key(row: dict) -> str:
-        return f'{row["campaign_id"]}::{row["sku"]}'
+        return f'{row.get("client_id", "")}::{row["campaign_id"]}::{row["sku"]}'
 
     def build_tasks_from_json(self) -> list[Task]:
         tasks: list[Task] = []
@@ -522,15 +539,16 @@ class MainWindow(QMainWindow):
             data = {}
 
             for row in rows:
-                campaign_key = str(int(row["campaign_id"]))
+                campaign_key = f'{row.get("client_id", "")}::{int(row["campaign_id"])}'
                 row_key = self._build_row_key(row)
 
                 user_values = user_state.get(row_key, {})
                 limit = float(user_values.get("limit", row.get("limit", 0.0)))
                 position = int(user_values.get("position", row.get("position", 0)))
 
-                if campaign_key not in data:
-                    data[campaign_key] = {
+                data[campaign_key] = {
+                        "client_id": str(row.get("client_id", "")),
+                        "shop": str(row.get("shop", "")),
                         "campaign_id": int(row["campaign_id"]),
                         "name": str(row.get("campaign_name", "")),
                         "campaign_type": str(row.get("campaign_type", "")),
@@ -627,7 +645,7 @@ class MainWindow(QMainWindow):
         saved_state = self.load_table_state()
 
         for row in rows:
-            campaign_key = str(int(row["campaign_id"]))
+            campaign_key = f'{row.get("client_id", "")}::{int(row["campaign_id"])}'
             saved_campaign = saved_state.get(campaign_key)
 
             if not saved_campaign:
@@ -786,7 +804,7 @@ class MainWindow(QMainWindow):
 
         self.worker_thread = QThread(self)
         self.worker = worker_cls(
-            webdriver=self.webdriver,
+            webdrivers=self.webdrivers,
             user_state=user_state,
             cycle_interval_ms=self.cycle_interval_ms
         )

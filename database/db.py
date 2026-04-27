@@ -60,9 +60,20 @@ class DbConnection:
         self.session = Session(self.engine)
 
     @retry_on_exception()
-    def get_market(self) -> Type[Market]:
-        market = self.session.query(Market).filter_by(marketplace="МВидео", entrepreneur="Бурчян Г.С.").first()
-        return market
+    def get_markets(self) -> list[Type[Market]]:
+        client_ids = [
+            "K000071171",
+            "K000073787",
+        ]
+
+        markets = (
+            self.session
+            .query(Market)
+            .filter(Market.marketplace == "МВидео")
+            .filter(Market.client_id.in_(client_ids))
+            .all()
+        )
+        return markets
 
 
     @retry_on_exception()

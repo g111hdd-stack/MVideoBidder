@@ -11,39 +11,56 @@ class LogWorker(QObject):
     finished = Signal(list)
     error = Signal(str)
 
-    def __init__(self, webdriver, url: str) -> None:
+    def __init__(self, webdrivers: list, url: str) -> None:
         super().__init__()
-        self.webdriver = webdriver
+        self.webdrivers = webdrivers
         self.url = url
 
     def run(self) -> None:
+        all_data = []
+
         try:
-            self.webdriver.set_gui_logger(self.log_message.emit)
-
             self.log_message.emit("Запуск загрузки данных...")
-            campaigns = self._load_campaigns()
-            self.log_message.emit("Данные успешно загружены. Открываем таблицу...")
 
-            self.finished.emit(campaigns)
+            for i, webdriver in enumerate(self.webdrivers, start=1):
+                shop_name = getattr(webdriver, "name_company", "")
+                client_id = getattr(webdriver, "client_id", "")
+
+                self.log_message.emit(
+                    f"Загрузка магазина {i}/{len(self.webdrivers)}: {shop_name} / client_id={client_id}")
+                webdriver.set_gui_logger(self.log_message.emit)
+                campaigns = self._load_campaigns(webdriver)
+                all_data.append({
+                    "webdriver": webdriver,
+                    "campaigns": campaigns,
+                })
+                webdriver.set_gui_logger(None)
+            self.log_message.emit("Данные успешно загружены. Открываем таблицу...")
+            self.finished.emit(all_data)
 
         except Exception as e:
             self.error.emit(str(e))
-        finally:
-            self.webdriver.set_gui_logger(None)
 
-    def _load_campaigns(self):
-        self.webdriver.load_url(self.url)
-        return self.webdriver.bidder_info()
+        finally:
+            for webdriver in self.webdrivers:
+                try:
+                    webdriver.set_gui_logger(None)
+                except Exception:
+                    pass
+
+    def _load_campaigns(self, webdriver):
+        webdriver.load_url(self.url)
+        return webdriver.bidder_info()
 
 
 class LogWindow(QMainWindow):
-    def __init__(self, main_window, webdriver, url: str) -> None:
+    def __init__(self, main_window, webdrivers: list, url: str) -> None:
         super().__init__()
         self.setWindowTitle(f"MVideo Bidder v{APP_VERSION} - Логи запуска")
         self.resize(500, 200)
 
         self.main_window = main_window
-        self.webdriver = webdriver
+        self.webdrivers = webdrivers
         self.url = url
 
         self.thread: QThread | None = None
@@ -74,7 +91,7 @@ class LogWindow(QMainWindow):
 
     def start_loading(self) -> None:
         self.thread = QThread(self)
-        self.worker = LogWorker(self.webdriver, self.url)
+        self.worker = LogWorker(self.webdrivers, self.url)
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
@@ -88,8 +105,17 @@ class LogWindow(QMainWindow):
 
         self.thread.start()
 
-    def on_finished(self, campaigns) -> None:
-        rows = self.main_window.campaigns_to_rows(campaigns)
+    def on_finished(self, all_data) -> None:
+        rows = []
+
+        for item in all_data:
+            webdriver = item["webdriver"]
+            campaigns = item["campaigns"]
+
+            rows.extend(
+                self.main_window.campaigns_to_rows_for_webdriver(webdriver, campaigns)
+            )
+
         self.main_window.model.set_rows(rows)
         self.main_window.fill_position_widgets()
         self.main_window.save_table_state()

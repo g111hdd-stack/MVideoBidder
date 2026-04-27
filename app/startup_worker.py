@@ -12,18 +12,38 @@ class StartupWorker(QObject):
     error = Signal(str)
 
     def run(self) -> None:
+        webdrivers = []
+
         try:
             self.progress.emit("Подключение к базе данных...")
             db_conn = DbConnection()
 
-            self.progress.emit("Получение данных маркетплейса...")
-            market = db_conn.get_market()
-            url = market.marketplace_info.link
+            self.progress.emit("Получение списка магазинов...")
+            markets = db_conn.get_markets()
 
-            self.progress.emit("Запуск WebDriver...")
-            webdriver = WebDriver(market, db_conn)
+            if not markets:
+                raise Exception("В базе не найдено ни одного магазина")
 
-            self.finished.emit(db_conn, webdriver, url)
+            url = markets[0].marketplace_info.link
+
+            for i, market in enumerate(markets, start=1):
+                name = market.name_company
+                client_id = market.client_id
+
+                self.progress.emit(
+                    f"Запуск WebDriver {i}/{len(markets)}: {name} / client_id={client_id}"
+                )
+
+                webdriver = WebDriver(market, db_conn)
+                webdrivers.append(webdriver)
+
+            self.finished.emit(db_conn, webdrivers, url)
 
         except Exception as e:
+            for webdriver in webdrivers:
+                try:
+                    webdriver.quit()
+                except Exception:
+                    pass
+
             self.error.emit(str(e))

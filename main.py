@@ -26,7 +26,7 @@ class StartupController(QObject):
         self.startup_worker = StartupWorker()
 
         self.db_conn = None
-        self.webdriver = None
+        self.webdrivers = []
         self.url = ""
         self.window = None
         self.log_window = None
@@ -54,23 +54,23 @@ class StartupController(QObject):
         self.logger.info(text)
 
     @Slot(object, object, str)
-    def on_finished(self, db_conn, webdriver, url: str) -> None:
+    def on_finished(self, db_conn, webdrivers, url: str) -> None:
         self.logger.info("Инициализация завершена")
 
         self.db_conn = db_conn
-        self.webdriver = webdriver
+        self.webdrivers = webdrivers
         self.url = url
 
         self.window = MainWindow(
             db_conn=self.db_conn,
-            webdriver=self.webdriver,
+            webdrivers=self.webdrivers,
             url=self.url,
             auto_load=False,
         )
 
         self.log_window = LogWindow(
             main_window=self.window,
-            webdriver=self.webdriver,
+            webdrivers=self.webdrivers,
             url=self.url,
         )
 
@@ -91,9 +91,14 @@ class StartupController(QObject):
     def on_app_quit(self) -> None:
         try:
             self.logger.info("Завершение приложения")
-            if self.webdriver is not None:
-                self.webdriver.quit()
-                self.logger.info("WebDriver закрыт")
+            for webdriver in self.webdrivers:
+                try:
+                    webdriver.quit()
+                    self.logger.info(
+                        f"WebDriver закрыт: {getattr(webdriver, 'name_company', '')}"
+                    )
+                except Exception as e:
+                    self.logger.exception(f"Ошибка закрытия WebDriver: {e}")
         except Exception as e:
             self.logger.exception(f"Ошибка при закрытии WebDriver: {e}")
 
