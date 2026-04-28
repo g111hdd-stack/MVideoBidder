@@ -6,8 +6,10 @@ from updater.version import APP_VERSION
 
 from pathlib import Path
 
+from PySide6.QtGui import QAction
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit
+from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit, \
+    QFrame, QLineEdit, QMenu
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
@@ -172,6 +174,17 @@ class CycleIntervalDialog(QDialog):
     def get_minutes(self) -> int:
         return int(self.spin_box.value())
 
+class CheckableFilterMenu(QMenu):
+    def mouseReleaseEvent(self, event) -> None:
+        action = self.actionAt(event.pos())
+
+        if action is not None and action.isCheckable():
+            action.trigger()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
+
 class MainWindow(QMainWindow):
     gui_log_signal = Signal(str)
 
@@ -198,6 +211,15 @@ class MainWindow(QMainWindow):
         self.worker_busy = False
 
         self.model = CampaignTableModel(on_change=self.save_table_state)
+
+        self.filters_expanded = True
+
+        self.filter_menus = {}
+        self.filter_actions = {
+            "shop": {},
+            "campaign_id": {},
+            "category": {},
+        }
 
         self._init_ui()
         self._load_app_settings()
@@ -231,6 +253,46 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.interval_button)
         button_layout.addWidget(self.status_label)
         button_layout.addStretch()
+
+        self.filter_bar = QFrame()
+        self.filter_bar.setFrameShape(QFrame.Shape.StyledPanel)
+
+        filter_layout = QHBoxLayout(self.filter_bar)
+        filter_layout.setContentsMargins(6, 6, 6, 6)
+
+        self.filters_toggle_button = QPushButton("☰")
+        self.filters_toggle_button.setFixedWidth(42)
+        self.filters_toggle_button.setToolTip("Показать / скрыть фильтры")
+        self.filters_toggle_button.clicked.connect(self.toggle_filters_panel)
+
+        self.search_filter = QLineEdit()
+        self.search_filter.setPlaceholderText("Поиск по магазину, ID, категории, SKU")
+        self.search_filter.textChanged.connect(self.apply_filters)
+
+        self.shop_filter_button = QPushButton("Магазины")
+        self.campaign_filter_button = QPushButton("Рекламное ID")
+        self.category_filter_button = QPushButton("Категории")
+
+        self.shop_filter_menu = CheckableFilterMenu(self)
+        self.campaign_filter_menu = CheckableFilterMenu(self)
+        self.category_filter_menu = CheckableFilterMenu(self)
+
+        self.shop_filter_button.setMenu(self.shop_filter_menu)
+        self.campaign_filter_button.setMenu(self.campaign_filter_menu)
+        self.category_filter_button.setMenu(self.category_filter_menu)
+
+        self.filter_menus = {
+            "shop": self.shop_filter_menu,
+            "campaign_id": self.campaign_filter_menu,
+            "category": self.category_filter_menu,
+        }
+
+        filter_layout.addWidget(self.filters_toggle_button)
+        filter_layout.addWidget(self.search_filter)
+        filter_layout.addWidget(self.shop_filter_button)
+        filter_layout.addWidget(self.campaign_filter_button)
+        filter_layout.addWidget(self.category_filter_button)
+        filter_layout.addStretch()
 
         self.table = QTableView()
         self.table.setModel(self.model)
@@ -275,9 +337,179 @@ class MainWindow(QMainWindow):
         self.table.setColumnWidth(POSITION_COLUMN, 90)
 
         main_layout.addLayout(button_layout)
+        main_layout.addWidget(self.filter_bar)
         main_layout.addWidget(self.table)
 
         self.setCentralWidget(root)
+
+    def toggle_filters_panel(self) -> None:
+        self.filters_expanded = not self.filters_expanded
+
+        self.search_filter.setVisible(self.filters_expanded)
+        self.shop_filter_button.setVisible(self.filters_expanded)
+        self.campaign_filter_button.setVisible(self.filters_expanded)
+        self.category_filter_button.setVisible(self.filters_expanded)
+
+        self.filters_toggle_button.setText("☰" if self.filters_expanded else "▶")
+
+    def rebuild_filter_menus(self) -> None:
+        rows = self.model.get_rows()
+
+        shops = sorted({
+            str(row.get("shop", ""))
+            for row in rows
+            if str(row.get("shop", "")).strip()
+        })
+
+        campaign_ids = sorted({
+            str(row.get("campaign_id", ""))
+            for row in rows
+            if str(row.get("campaign_id", "")).strip()
+               and str(row.get("campaign_id", "")) != "0"
+        })
+
+        categories = sorted({
+            str(row.get("category", ""))
+            for row in rows
+            if str(row.get("category", "")).strip()
+        })
+
+        self.rebuild_one_filter_menu("shop", shops)
+        self.rebuild_one_filter_menu("campaign_id", campaign_ids)
+        self.rebuild_one_filter_menu("category", categories)
+
+    def rebuild_one_filter_menu(self, filter_name: str, values: list[str]) -> None:
+        menu = self.filter_menus[filter_name]
+
+        old_selected = self.get_selected_filter_values(filter_name)
+
+        if not old_selected:
+            old_selected = set(values)
+
+        menu.clear()
+        self.filter_actions[filter_name] = {}
+
+        all_action = QAction("Все", self)
+        all_action.setCheckable(True)
+        all_action.setChecked(len(old_selected) == len(values))
+        all_action.triggered.connect(
+            lambda checked, name=filter_name: self.set_all_filter_values(name, checked)
+        )
+
+        menu.addAction(all_action)
+        self.filter_actions[filter_name]["__all__"] = all_action
+
+        menu.addSeparator()
+
+        for value in values:
+            action = QAction(value, self)
+            action.setCheckable(True)
+            action.setChecked(value in old_selected)
+            action.triggered.connect(
+                lambda _checked, name=filter_name: self.on_filter_action_changed(name)
+            )
+
+            menu.addAction(action)
+            self.filter_actions[filter_name][value] = action
+
+    def set_all_filter_values(self, filter_name: str, checked: bool) -> None:
+        actions = self.filter_actions.get(filter_name, {})
+
+        for value, action in actions.items():
+            if value == "__all__":
+                continue
+
+            action.blockSignals(True)
+            action.setChecked(checked)
+            action.blockSignals(False)
+
+        self.apply_filters()
+
+    def on_filter_action_changed(self, filter_name: str) -> None:
+        actions = self.filter_actions.get(filter_name, {})
+
+        real_actions = [
+            action
+            for value, action in actions.items()
+            if value != "__all__"
+        ]
+
+        all_checked = bool(real_actions) and all(action.isChecked() for action in real_actions)
+
+        all_action = actions.get("__all__")
+        if all_action is not None:
+            all_action.blockSignals(True)
+            all_action.setChecked(all_checked)
+            all_action.blockSignals(False)
+
+        self.apply_filters()
+
+    def get_selected_filter_values(self, filter_name: str) -> set[str]:
+        result = set()
+
+        for value, action in self.filter_actions.get(filter_name, {}).items():
+            if value == "__all__":
+                continue
+
+            if action.isChecked():
+                result.add(value)
+
+        return result
+
+    def filter_has_values(self, filter_name: str) -> bool:
+        return any(
+            value != "__all__"
+            for value in self.filter_actions.get(filter_name, {})
+        )
+
+    def apply_filters(self) -> None:
+        search_text = self.search_filter.text().strip().lower()
+
+        selected_shops = self.get_selected_filter_values("shop")
+        selected_campaign_ids = self.get_selected_filter_values("campaign_id")
+        selected_categories = self.get_selected_filter_values("category")
+
+        has_shop_filter = self.filter_has_values("shop")
+        has_campaign_filter = self.filter_has_values("campaign_id")
+        has_category_filter = self.filter_has_values("category")
+
+        for row_index, row in enumerate(self.model.get_rows()):
+            row_shop = str(row.get("shop", ""))
+            row_client_id = str(row.get("client_id", ""))
+            row_campaign_id = str(row.get("campaign_id", ""))
+            row_campaign_name = str(row.get("campaign_name", ""))
+            row_sku = str(row.get("sku", ""))
+            row_item_name = str(row.get("item_name", ""))
+            row_category = str(row.get("category", ""))
+
+            visible = True
+
+            if has_shop_filter and row_shop not in selected_shops:
+                visible = False
+
+            if has_campaign_filter and row_campaign_id not in selected_campaign_ids:
+                visible = False
+
+            if has_category_filter and row_category not in selected_categories:
+                visible = False
+
+            if search_text:
+                search_area = " ".join([
+                    row_shop,
+                    row_client_id,
+                    row_campaign_id,
+                    row_campaign_name,
+                    row_sku,
+                    row_item_name,
+                    row_category,
+                ]).lower()
+
+                if search_text not in search_area:
+                    visible = False
+
+            self.table.setRowHidden(row_index, not visible)
+
+        self.fill_position_widgets()
 
     def sync_table_state(self) -> None:
         try:
@@ -340,19 +572,26 @@ class MainWindow(QMainWindow):
 
         rows = self.apply_saved_state(rows)
         self.model.set_rows(rows)
-        self.fill_position_widgets()
+        self.rebuild_filter_menus()
+        self.apply_filters()
 
     def _clear_position_widgets(self) -> None:
         for row in range(self.model.rowCount()):
             index = self.model.index(row, POSITION_COLUMN)
             widget = self.table.indexWidget(index)
+
             if widget is not None:
+                self.table.setIndexWidget(index, None)
+                widget.setParent(None)
                 widget.deleteLater()
 
     def fill_position_widgets(self) -> None:
         self._clear_position_widgets()
 
         for row in range(self.model.rowCount()):
+            if self.table.isRowHidden(row):
+                continue
+
             index = self.model.index(row, POSITION_COLUMN)
 
             combo = QComboBox(self.table)
@@ -466,16 +705,23 @@ class MainWindow(QMainWindow):
 
     def load_campaigns(self) -> None:
         try:
-            self.webdriver.load_url(self.url)
-            campaigns = self.webdriver.bidder_info()
-            rows = self.campaigns_to_rows(campaigns)
+            rows = []
+
+            for webdriver in self.webdrivers:
+                webdriver.load_url(self.url)
+                campaigns = webdriver.bidder_info()
+
+                rows.extend(
+                    self.campaigns_to_rows_for_webdriver(webdriver, campaigns)
+                )
 
             if not rows:
                 QMessageBox.information(self, "Информация", "Кампании не найдены")
                 return
 
             self.model.set_rows(rows)
-            self.fill_position_widgets()
+            self.rebuild_filter_menus()
+            self.apply_filters()
             self.save_table_state()
 
         except Exception as e:
@@ -828,7 +1074,8 @@ class MainWindow(QMainWindow):
         if rows:
             self.save_json_state(rows, user_state)
             self.model.set_rows(rows)
-            self.fill_position_widgets()
+            self.rebuild_filter_menus()
+            self.apply_filters()
 
     def _on_worker_error(self, text: str) -> None:
         logger.exception(f"Ошибка worker: {text}")

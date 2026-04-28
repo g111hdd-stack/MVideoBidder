@@ -1,8 +1,10 @@
 import sys
+import psutil
 
 from updater.update_service import check_update, run_update
 from updater.update_dialogs import ask_update, show_update_window
 
+from pathlib import Path
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QObject, QThread, Slot
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -14,6 +16,29 @@ from utils.app_logger import setup_logger
 from app.startup_window import StartupWindow
 from app.startup_worker import StartupWorker
 
+def get_app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parent
+
+
+def kill_own_firefox_by_profile(logger=None) -> None:
+    app_dir = get_app_dir()
+    profile_root = str(app_dir / "profile").lower()
+
+    for process in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            name = (process.info["name"] or "").lower()
+            cmdline = " ".join(process.info["cmdline"] or []).lower()
+
+            if name == "firefox.exe" and profile_root in cmdline:
+                if logger:
+                    logger.info(f"Закрываю зависший Firefox: pid={process.info['pid']}")
+                process.kill()
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
 
 class StartupController(QObject):
     def __init__(self, app: QApplication, logger) -> None:
@@ -105,8 +130,10 @@ class StartupController(QObject):
 
 def main() -> int:
     logger = setup_logger()
-    logger.info("Запуск приложения")
+    logger.info("Проверка на незавершенные сеансы")
+    kill_own_firefox_by_profile()
 
+    logger.info("Запуск приложения")
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(ICON_PATH))
 

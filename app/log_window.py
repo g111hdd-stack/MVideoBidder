@@ -117,7 +117,8 @@ class LogWindow(QMainWindow):
             )
 
         self.main_window.model.set_rows(rows)
-        self.main_window.fill_position_widgets()
+        self.main_window.rebuild_filter_menus()
+        self.main_window.apply_filters()
         self.main_window.save_table_state()
 
         self.main_window.show()
