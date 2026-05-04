@@ -6,8 +6,10 @@ from updater.version import APP_VERSION
 
 from pathlib import Path
 
+from PySide6.QtGui import QAction
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit
+from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit, \
+    QFrame, QLineEdit, QMenu
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
@@ -15,6 +17,7 @@ from utils.app_logger import set_gui_logger_callback
 from app.gui_worker import RefreshWorker, BidderCycleWorker
 
 TABLE_HEADERS = [
+    "Магазин",
     "Рекламное ID",
     "Название РК",
     "Статус РК",
@@ -26,17 +29,17 @@ TABLE_HEADERS = [
     "Лимит ставки",
     "Позиция",
 ]
-
-ID_COLUMN = 0
-CAMPAIGN_NAME_COLUMN = 1
-STATUS_COLUMN = 2
-SKU_COLUMN = 3
-ITEM_NAME_COLUMN = 4
-CATEGORY_COLUMN = 5
-QUANTITY_COLUMN = 6
-BID_COLUMN = 7
-LIMIT_COLUMN = 8
-POSITION_COLUMN = 9
+SHOP_COLUMN = 0
+ID_COLUMN = 1
+CAMPAIGN_NAME_COLUMN = 2
+STATUS_COLUMN = 3
+SKU_COLUMN = 4
+ITEM_NAME_COLUMN = 5
+CATEGORY_COLUMN = 6
+QUANTITY_COLUMN = 7
+BID_COLUMN = 8
+LIMIT_COLUMN = 9
+POSITION_COLUMN = 10
 
 logger = logging.getLogger("mvideo_bidder")
 
@@ -71,6 +74,7 @@ class CampaignTableModel(QAbstractTableModel):
         row = self._rows[index.row()]
 
         column_map = {
+            SHOP_COLUMN: "shop",
             ID_COLUMN: "campaign_id",
             CAMPAIGN_NAME_COLUMN: "campaign_name",
             STATUS_COLUMN: "status",
@@ -170,16 +174,27 @@ class CycleIntervalDialog(QDialog):
     def get_minutes(self) -> int:
         return int(self.spin_box.value())
 
+class CheckableFilterMenu(QMenu):
+    def mouseReleaseEvent(self, event) -> None:
+        action = self.actionAt(event.pos())
+
+        if action is not None and action.isCheckable():
+            action.trigger()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
+
 class MainWindow(QMainWindow):
     gui_log_signal = Signal(str)
 
-    def __init__(self, db_conn, webdriver=None, url: str = "", auto_load: bool = True) -> None:
+    def __init__(self, db_conn, webdrivers: list | None = None, url: str = "", auto_load: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(f"MVideo Bidder v{APP_VERSION}")
         self.resize(1450, 700)
 
         self.db_conn = db_conn
-        self.webdriver = webdriver
+        self.webdrivers = webdrivers or []
         self.url = url
         self.auto_load = auto_load
         self.storage_path = Path("campaign_state.json")
@@ -196,6 +211,13 @@ class MainWindow(QMainWindow):
         self.worker_busy = False
 
         self.model = CampaignTableModel(on_change=self.save_table_state)
+
+        self.filter_menus = {}
+        self.filter_actions = {
+            "shop": {},
+            "campaign_id": {},
+            "category": {},
+        }
 
         self._init_ui()
         self._load_app_settings()
@@ -229,6 +251,40 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.interval_button)
         button_layout.addWidget(self.status_label)
         button_layout.addStretch()
+
+        self.filter_bar = QFrame()
+        self.filter_bar.setFrameShape(QFrame.Shape.StyledPanel)
+
+        filter_layout = QHBoxLayout(self.filter_bar)
+        filter_layout.setContentsMargins(6, 6, 6, 6)
+
+        self.search_filter = QLineEdit()
+        self.search_filter.setPlaceholderText("Поиск по магазину, ID, категории, SKU")
+        self.search_filter.textChanged.connect(self.apply_filters)
+
+        self.shop_filter_button = QPushButton("Магазины")
+        self.campaign_filter_button = QPushButton("Рекламное ID")
+        self.category_filter_button = QPushButton("Категории")
+
+        self.shop_filter_menu = CheckableFilterMenu(self)
+        self.campaign_filter_menu = CheckableFilterMenu(self)
+        self.category_filter_menu = CheckableFilterMenu(self)
+
+        self.shop_filter_button.setMenu(self.shop_filter_menu)
+        self.campaign_filter_button.setMenu(self.campaign_filter_menu)
+        self.category_filter_button.setMenu(self.category_filter_menu)
+
+        self.filter_menus = {
+            "shop": self.shop_filter_menu,
+            "campaign_id": self.campaign_filter_menu,
+            "category": self.category_filter_menu,
+        }
+
+        filter_layout.addWidget(self.search_filter)
+        filter_layout.addWidget(self.shop_filter_button)
+        filter_layout.addWidget(self.campaign_filter_button)
+        filter_layout.addWidget(self.category_filter_button)
+        filter_layout.addStretch()
 
         self.table = QTableView()
         self.table.setModel(self.model)
@@ -273,9 +329,169 @@ class MainWindow(QMainWindow):
         self.table.setColumnWidth(POSITION_COLUMN, 90)
 
         main_layout.addLayout(button_layout)
+        main_layout.addWidget(self.filter_bar)
         main_layout.addWidget(self.table)
 
         self.setCentralWidget(root)
+
+    def rebuild_filter_menus(self) -> None:
+        rows = self.model.get_rows()
+
+        shops = sorted({
+            str(row.get("shop", ""))
+            for row in rows
+            if str(row.get("shop", "")).strip()
+        })
+
+        campaign_ids = sorted({
+            str(row.get("campaign_id", ""))
+            for row in rows
+            if str(row.get("campaign_id", "")).strip()
+               and str(row.get("campaign_id", "")) != "0"
+        })
+
+        categories = sorted({
+            str(row.get("category", ""))
+            for row in rows
+            if str(row.get("category", "")).strip()
+        })
+
+        self.rebuild_one_filter_menu("shop", shops)
+        self.rebuild_one_filter_menu("campaign_id", campaign_ids)
+        self.rebuild_one_filter_menu("category", categories)
+
+    def rebuild_one_filter_menu(self, filter_name: str, values: list[str]) -> None:
+        menu = self.filter_menus[filter_name]
+
+        old_selected = self.get_selected_filter_values(filter_name)
+
+        if not old_selected:
+            old_selected = set(values)
+
+        menu.clear()
+        self.filter_actions[filter_name] = {}
+
+        all_action = QAction("Все", self)
+        all_action.setCheckable(True)
+        all_action.setChecked(len(old_selected) == len(values))
+        all_action.triggered.connect(
+            lambda checked, name=filter_name: self.set_all_filter_values(name, checked)
+        )
+
+        menu.addAction(all_action)
+        self.filter_actions[filter_name]["__all__"] = all_action
+
+        menu.addSeparator()
+
+        for value in values:
+            action = QAction(value, self)
+            action.setCheckable(True)
+            action.setChecked(value in old_selected)
+            action.triggered.connect(
+                lambda _checked, name=filter_name: self.on_filter_action_changed(name)
+            )
+
+            menu.addAction(action)
+            self.filter_actions[filter_name][value] = action
+
+    def set_all_filter_values(self, filter_name: str, checked: bool) -> None:
+        actions = self.filter_actions.get(filter_name, {})
+
+        for value, action in actions.items():
+            if value == "__all__":
+                continue
+
+            action.blockSignals(True)
+            action.setChecked(checked)
+            action.blockSignals(False)
+
+        self.apply_filters()
+
+    def on_filter_action_changed(self, filter_name: str) -> None:
+        actions = self.filter_actions.get(filter_name, {})
+
+        real_actions = [
+            action
+            for value, action in actions.items()
+            if value != "__all__"
+        ]
+
+        all_checked = bool(real_actions) and all(action.isChecked() for action in real_actions)
+
+        all_action = actions.get("__all__")
+        if all_action is not None:
+            all_action.blockSignals(True)
+            all_action.setChecked(all_checked)
+            all_action.blockSignals(False)
+
+        self.apply_filters()
+
+    def get_selected_filter_values(self, filter_name: str) -> set[str]:
+        result = set()
+
+        for value, action in self.filter_actions.get(filter_name, {}).items():
+            if value == "__all__":
+                continue
+
+            if action.isChecked():
+                result.add(value)
+
+        return result
+
+    def filter_has_values(self, filter_name: str) -> bool:
+        return any(
+            value != "__all__"
+            for value in self.filter_actions.get(filter_name, {})
+        )
+
+    def apply_filters(self) -> None:
+        search_text = self.search_filter.text().strip().lower()
+
+        selected_shops = self.get_selected_filter_values("shop")
+        selected_campaign_ids = self.get_selected_filter_values("campaign_id")
+        selected_categories = self.get_selected_filter_values("category")
+
+        has_shop_filter = self.filter_has_values("shop")
+        has_campaign_filter = self.filter_has_values("campaign_id")
+        has_category_filter = self.filter_has_values("category")
+
+        for row_index, row in enumerate(self.model.get_rows()):
+            row_shop = str(row.get("shop", ""))
+            row_client_id = str(row.get("client_id", ""))
+            row_campaign_id = str(row.get("campaign_id", ""))
+            row_campaign_name = str(row.get("campaign_name", ""))
+            row_sku = str(row.get("sku", ""))
+            row_item_name = str(row.get("item_name", ""))
+            row_category = str(row.get("category", ""))
+
+            visible = True
+
+            if has_shop_filter and row_shop not in selected_shops:
+                visible = False
+
+            if has_campaign_filter and row_campaign_id not in selected_campaign_ids:
+                visible = False
+
+            if has_category_filter and row_category not in selected_categories:
+                visible = False
+
+            if search_text:
+                search_area = " ".join([
+                    row_shop,
+                    row_client_id,
+                    row_campaign_id,
+                    row_campaign_name,
+                    row_sku,
+                    row_item_name,
+                    row_category,
+                ]).lower()
+
+                if search_text not in search_area:
+                    visible = False
+
+            self.table.setRowHidden(row_index, not visible)
+
+        self.fill_position_widgets()
 
     def sync_table_state(self) -> None:
         try:
@@ -318,6 +534,8 @@ class MainWindow(QMainWindow):
         rows = []
         for _ in range(10):
             rows.append({
+                "client_id": "",
+                "shop": "",
                 "campaign_id": 0,
                 "campaign_name": "",
                 "status": "",
@@ -326,6 +544,7 @@ class MainWindow(QMainWindow):
                 "category": "",
                 "category_id": 0,
                 "region": [],
+                "regions": [],
                 "keywords": [],
                 "quantity": 0,
                 "bid": 0.0,
@@ -335,19 +554,26 @@ class MainWindow(QMainWindow):
 
         rows = self.apply_saved_state(rows)
         self.model.set_rows(rows)
-        self.fill_position_widgets()
+        self.rebuild_filter_menus()
+        self.apply_filters()
 
     def _clear_position_widgets(self) -> None:
         for row in range(self.model.rowCount()):
             index = self.model.index(row, POSITION_COLUMN)
             widget = self.table.indexWidget(index)
+
             if widget is not None:
+                self.table.setIndexWidget(index, None)
+                widget.setParent(None)
                 widget.deleteLater()
 
     def fill_position_widgets(self) -> None:
         self._clear_position_widgets()
 
         for row in range(self.model.rowCount()):
+            if self.table.isRowHidden(row):
+                continue
+
             index = self.model.index(row, POSITION_COLUMN)
 
             combo = QComboBox(self.table)
@@ -395,6 +621,7 @@ class MainWindow(QMainWindow):
             return False
 
         current_row = self.model.get_rows()[row]
+        client_id = str(current_row.get("client_id", ""))
         campaign_id = int(current_row.get("campaign_id", 0))
         category_id = int(current_row.get("category_id", 0))
 
@@ -403,7 +630,8 @@ class MainWindow(QMainWindow):
                 continue
 
             if (
-                    int(other_row.get("campaign_id", 0)) == campaign_id
+                    str(other_row.get("client_id", "")) == client_id
+                    and int(other_row.get("campaign_id", 0)) == campaign_id
                     and int(other_row.get("category_id", 0)) == category_id
                     and int(other_row.get("position", 0)) == new_position
             ):
@@ -411,14 +639,24 @@ class MainWindow(QMainWindow):
 
         return False
 
-
-
     def campaigns_to_rows(self, campaigns) -> list[dict]:
+        if not self.webdrivers:
+            return []
+
+        return self.campaigns_to_rows_for_webdriver(self.webdrivers[0], campaigns)
+
+    def campaigns_to_rows_for_webdriver(self, webdriver, campaigns) -> list[dict]:
         rows: list[dict] = []
+
+        client_id = str(getattr(webdriver, "client_id", "") or "")
+        shop_name = str(getattr(webdriver, "name_company", "") or "")
 
         for campaign in campaigns:
             for item in campaign.items:
                 rows.append({
+                    "client_id": client_id,
+                    "shop": shop_name,
+
                     "campaign_id": int(campaign.campaign_id),
                     "campaign_name": str(campaign.name),
                     "campaign_type": str(campaign.campaign_type),
@@ -449,16 +687,23 @@ class MainWindow(QMainWindow):
 
     def load_campaigns(self) -> None:
         try:
-            self.webdriver.load_url(self.url)
-            campaigns = self.webdriver.bidder_info()
-            rows = self.campaigns_to_rows(campaigns)
+            rows = []
+
+            for webdriver in self.webdrivers:
+                webdriver.load_url(self.url)
+                campaigns = webdriver.bidder_info()
+
+                rows.extend(
+                    self.campaigns_to_rows_for_webdriver(webdriver, campaigns)
+                )
 
             if not rows:
                 QMessageBox.information(self, "Информация", "Кампании не найдены")
                 return
 
             self.model.set_rows(rows)
-            self.fill_position_widgets()
+            self.rebuild_filter_menus()
+            self.apply_filters()
             self.save_table_state()
 
         except Exception as e:
@@ -469,7 +714,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _build_row_key(row: dict) -> str:
-        return f'{row["campaign_id"]}::{row["sku"]}'
+        return f'{row.get("client_id", "")}::{row["campaign_id"]}::{row["sku"]}'
 
     def build_tasks_from_json(self) -> list[Task]:
         tasks: list[Task] = []
@@ -522,15 +767,16 @@ class MainWindow(QMainWindow):
             data = {}
 
             for row in rows:
-                campaign_key = str(int(row["campaign_id"]))
+                campaign_key = f'{row.get("client_id", "")}::{int(row["campaign_id"])}'
                 row_key = self._build_row_key(row)
 
                 user_values = user_state.get(row_key, {})
                 limit = float(user_values.get("limit", row.get("limit", 0.0)))
                 position = int(user_values.get("position", row.get("position", 0)))
 
-                if campaign_key not in data:
-                    data[campaign_key] = {
+                data[campaign_key] = {
+                        "client_id": str(row.get("client_id", "")),
+                        "shop": str(row.get("shop", "")),
                         "campaign_id": int(row["campaign_id"]),
                         "name": str(row.get("campaign_name", "")),
                         "campaign_type": str(row.get("campaign_type", "")),
@@ -627,7 +873,7 @@ class MainWindow(QMainWindow):
         saved_state = self.load_table_state()
 
         for row in rows:
-            campaign_key = str(int(row["campaign_id"]))
+            campaign_key = f'{row.get("client_id", "")}::{int(row["campaign_id"])}'
             saved_campaign = saved_state.get(campaign_key)
 
             if not saved_campaign:
@@ -786,7 +1032,7 @@ class MainWindow(QMainWindow):
 
         self.worker_thread = QThread(self)
         self.worker = worker_cls(
-            webdriver=self.webdriver,
+            webdrivers=self.webdrivers,
             user_state=user_state,
             cycle_interval_ms=self.cycle_interval_ms
         )
@@ -810,7 +1056,8 @@ class MainWindow(QMainWindow):
         if rows:
             self.save_json_state(rows, user_state)
             self.model.set_rows(rows)
-            self.fill_position_widgets()
+            self.rebuild_filter_menus()
+            self.apply_filters()
 
     def _on_worker_error(self, text: str) -> None:
         logger.exception(f"Ошибка worker: {text}")

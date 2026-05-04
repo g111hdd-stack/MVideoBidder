@@ -106,7 +106,8 @@ class WebDriver:
         self.phone = market.connect_info.phone
         self.name_company = market.name_company
         self.marketplace = market.marketplace_info
-        self.browser_id = f"{self.phone}_{self.marketplace.marketplace.lower()}"
+        safe_client_id = str(market.client_id or market.name_company).replace(" ", "_")
+        self.browser_id = f"{self.phone}_{self.marketplace.marketplace.lower()}_{safe_client_id}"
         self.log_startswith = f"{self.marketplace.marketplace} - {market.name_company}: "
 
         app_dir = get_app_dir()

@@ -61,6 +61,7 @@ class Campaign:
 
 @dataclass(slots=True)
 class Task:
+    client_id: str
     campaign_id: int
     sku: int
     category_id: int
