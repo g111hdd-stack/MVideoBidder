@@ -44,9 +44,7 @@ POSITION_COLUMN = 10
 logger = logging.getLogger("mvideo_bidder")
 
 
-SHOP_GROUP_COLOR_A = QColor(43, 43, 43)
-SHOP_GROUP_COLOR_B = QColor(58, 58, 58)
-SHOP_GROUP_LINE_COLOR = QColor(130, 130, 130)
+SHOP_GROUP_LINE_COLOR = QColor(180, 180, 180)
 SHOP_GROUP_LINE_WIDTH = 2
 
 class CampaignTableModel(QAbstractTableModel):
@@ -108,11 +106,6 @@ class CampaignTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignCenter
-
-        if role == Qt.ItemDataRole.BackgroundRole:
-            if self.group_of(index.row()) % 2 == 0:
-                return SHOP_GROUP_COLOR_A
-            return SHOP_GROUP_COLOR_B
 
         return None
 
@@ -348,7 +341,7 @@ class MainWindow(QMainWindow):
         self.table.setModel(self.model)
 
         self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(False)
+        self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(False)

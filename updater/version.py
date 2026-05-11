@@ -1,4 +1,4 @@
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.2.2"
 
 GITHUB_OWNER = "ArrisComapny"
 GITHUB_REPO = "MVideoBidder"
