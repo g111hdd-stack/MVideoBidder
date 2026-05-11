@@ -61,20 +61,8 @@ class DbConnection:
 
     @retry_on_exception()
     def get_markets(self) -> list[Type[Market]]:
-        client_ids = [
-            "K000071171",
-            "K000073787",
-        ]
-
-        markets = (
-            self.session
-            .query(Market)
-            .filter(Market.marketplace == "МВидео")
-            .filter(Market.client_id.in_(client_ids))
-            .all()
-        )
+        markets = self.session.query(Market).filter(Market.marketplace == "МВидео").all()
         return markets
-
 
     @retry_on_exception()
     def get_phone_message(self, user: str, phone: str, marketplace: str) -> str:
