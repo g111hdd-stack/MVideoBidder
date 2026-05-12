@@ -123,7 +123,7 @@ class WebDriver:
         bit = "64" if platform.machine().endswith("64") else ""
 
         self.options = Options()
-        self.options.add_argument("-headless")
+        # self.options.add_argument("-headless")
         self.options.add_argument("-no-remote")
         self.options.add_argument("-profile")
         self.options.add_argument(self.profile_path)
@@ -523,27 +523,30 @@ class WebDriver:
 
         for task in tasks:
             if task.limit and task.position:
-                task_map.setdefault((task.category_id, task.campaign_id), [])
-                task_map[(task.category_id, task.campaign_id)].append(task)
+                task_map.setdefault(task.category_id, [])
+                task_map[task.category_id].append(task)
 
         for value in task_map.values():
             value.sort(key=lambda x: x.position)
 
-        for (category_id, _), items in task_map.items():
-            default_bids = [17, 16, 15, 14, 13, 12, 11]
+        for category_id, items in task_map.items():
+            default_bids = [18, 17, 16, 15, 14, 13, 12]
             for item in items:
-                while item.position < 8:
+                while True:
                     text = f"Кампания={item.campaign_id}, SKU={item.sku}, Позиция={item.position}"
                     self.log(f"{self.log_startswith}Обработка товара: {text}")
 
                     top_bids = self.get_top_bids(item)
-                    print(top_bids)
-                    count = len(top_bids) - max([len(items), max([i.position for i in items if i.position < 8])])
+
                     if top_bids is None:
                         self.log(f"{self.log_startswith}Нет данных о ставках")
                         break
-                    elif len(top_bids) < 7 and count < 0:
-                        top_bids.extend(default_bids[count:])
+
+                    print(top_bids)
+                    max_pos = max(i.position for i in items)
+
+                    if len(top_bids) < max_pos:
+                        top_bids.extend(default_bids[len(top_bids):max_pos])
 
                     print(top_bids)
 
@@ -554,7 +557,7 @@ class WebDriver:
                         self.log(f"{self.log_startswith}Товар уже занимает позицию {item.position}")
                         break
 
-                    bid_rub = (pos_bid + 1) * 10
+                    bid_rub = (pos_bid + 1) * 10 if item.position < 7 else pos_bid * 10
                     self.log(
                         f"{self.log_startswith}Чтобы поднять товар до {item.position} "
                         f"нужно изменить ставку до {bid_rub}"
@@ -562,8 +565,22 @@ class WebDriver:
 
                     if bid_rub > item.limit:
                         self.log(f"{self.log_startswith}Ставка позиции {bid_rub} больше лимита {item.limit}")
-                        for item2 in items:
-                            item2.position += 1
+                        if item.position == 7:
+                            self.log(f"{self.log_startswith}Позиция {item.position} больше лимита в 7")
+                            break
+
+                        taken = {it.position: it for it in items if it.position != 7}
+                        current = item
+                        while True:
+                            new_pos = current.position + 1
+                            if new_pos >= 7:
+                                current.position = 7
+                                break
+                            next_item = taken.get(new_pos)
+                            current.position = new_pos
+                            if next_item is None:
+                                break
+                            current = next_item
                         continue
 
                     delta = bid_rub - item.bid
@@ -594,10 +611,7 @@ class WebDriver:
                         self.log(f"{self.log_startswith}Изменение применено: {text}")
                     else:
                         self.log(f"{self.log_startswith}Что-то пошло не так")
-
                     break
-                else:
-                    self.log(f"{self.log_startswith}Позиция {item.position} больше лимита в 7")
 
 
     def load_url(self, url: str) -> None:
