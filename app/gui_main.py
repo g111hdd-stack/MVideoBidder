@@ -6,10 +6,10 @@ from updater.version import APP_VERSION
 
 from pathlib import Path
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor, QPen
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QThread, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QDialogButtonBox, QDialog, QLabel, QSpinBox, QDockWidget, QTextEdit, \
-    QFrame, QLineEdit, QMenu
+    QFrame, QLineEdit, QMenu, QStyledItemDelegate
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QMainWindow, QMessageBox, QPushButton, QTableView
 
 from domain.dtos import Task
@@ -44,11 +44,17 @@ POSITION_COLUMN = 10
 logger = logging.getLogger("mvideo_bidder")
 
 
+SHOP_GROUP_LINE_COLOR = QColor(180, 180, 180)
+SHOP_GROUP_LINE_WIDTH = 2
+
 class CampaignTableModel(QAbstractTableModel):
     def __init__(self, rows: list[dict] | None = None, on_change=None) -> None:
         super().__init__()
         self._rows = rows or []
         self._on_change = on_change
+        self._group_index: list[int] = []
+        self._group_first: set[int] = set()
+        self._compute_groups()
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
         if parent.isValid():
@@ -136,10 +142,55 @@ class CampaignTableModel(QAbstractTableModel):
     def set_rows(self, rows: list[dict]) -> None:
         self.beginResetModel()
         self._rows = rows
+        self._compute_groups()
         self.endResetModel()
 
     def get_rows(self) -> list[dict]:
         return self._rows
+
+    def _compute_groups(self) -> None:
+        self._group_index = []
+        self._group_first = set()
+
+        current_group = 0
+        prev_shop = None
+
+        for i, row in enumerate(self._rows):
+            shop = str(row.get("shop", ""))
+            if i == 0:
+                self._group_first.add(i)
+            elif shop != prev_shop:
+                current_group += 1
+                self._group_first.add(i)
+            self._group_index.append(current_group)
+            prev_shop = shop
+
+    def group_of(self, row: int) -> int:
+        if 0 <= row < len(self._group_index):
+            return self._group_index[row]
+        return 0
+
+    def is_group_first(self, row: int) -> bool:
+        return row in self._group_first
+
+class ShopGroupDelegate(QStyledItemDelegate):
+    def __init__(self, model: CampaignTableModel, parent=None) -> None:
+        super().__init__(parent)
+        self._model = model
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+
+        row = index.row()
+        if row > 0 and self._model.is_group_first(row):
+            painter.save()
+            pen = QPen(SHOP_GROUP_LINE_COLOR)
+            pen.setWidth(SHOP_GROUP_LINE_WIDTH)
+            painter.setPen(pen)
+            y = option.rect.top()
+            painter.drawLine(option.rect.left(), y, option.rect.right(), y)
+            painter.restore()
+
 
 class CycleIntervalDialog(QDialog):
     def __init__(self, current_minutes: int, parent=None) -> None:
@@ -294,6 +345,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
         self.table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.table.setSortingEnabled(False)
+        self.table.setItemDelegate(ShopGroupDelegate(self.model, self.table))
 
         self.table.setStyleSheet("""
             QTableView::item:hover {
@@ -576,15 +628,28 @@ class MainWindow(QMainWindow):
 
             index = self.model.index(row, POSITION_COLUMN)
 
-            combo = QComboBox(self.table)
-            combo.addItems(["0", "1", "2", "3", "4"])
+            container = QWidget(self.table)
+            container.setObjectName("posCell")
+            container_layout = QHBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(0)
+
+            combo = QComboBox(container)
+            combo.addItems(["0", "1", "2", "3", "4", "5", "6", "7"])
             combo.setMaxVisibleItems(5)
             combo.setCurrentText(str(self.model.data(index, Qt.ItemDataRole.EditRole) or "0"))
             combo.currentTextChanged.connect(
                 lambda value, current_row=row: self._on_position_changed(current_row, value)
             )
+            container_layout.addWidget(combo)
 
-            self.table.setIndexWidget(index, combo)
+            if row > 0 and self.model.is_group_first(row):
+                line = SHOP_GROUP_LINE_COLOR.name()
+                container.setStyleSheet(
+                    f"QWidget#posCell {{ border-top: {SHOP_GROUP_LINE_WIDTH}px solid {line}; }}"
+                )
+
+            self.table.setIndexWidget(index, container)
 
     def _on_position_changed(self, row: int, value: str) -> None:
         try:
@@ -601,20 +666,39 @@ class MainWindow(QMainWindow):
                 "Дублирующаяся позиция",
                 (
                     f"Позиция {new_position} уже занята для этой РК и Категории.\n"
-                    f"Позиции 1–4 должны быть уникальны в рамках РК и Категории"
+                    f"Позиции 1–7 должны быть уникальны в рамках РК и Категории"
                 ),
             )
 
-            index = self.model.index(row, POSITION_COLUMN)
-            widget = self.table.indexWidget(index)
-            if isinstance(widget, QComboBox):
-                widget.blockSignals(True)
-                widget.setCurrentText(str(old_position))
-                widget.blockSignals(False)
+            self._revert_position_widget(row, old_position)
+            return
+
+        if self._has_global_position_conflict(row, new_position):
+            QMessageBox.warning(
+                self,
+                "Дублирующаяся позиция между магазинами",
+                (
+                    f"Позиция {new_position} уже занята другим магазином "
+                    f"для этой Категории.\n"
+                    f"Связка Категория + Позиция должна быть уникальна "
+                    f"между всеми магазинами"
+                ),
+            )
+
+            self._revert_position_widget(row, old_position)
             return
 
         index = self.model.index(row, POSITION_COLUMN)
         self.model.setData(index, value, Qt.ItemDataRole.EditRole)
+
+    def _revert_position_widget(self, row: int, old_position: int) -> None:
+        index = self.model.index(row, POSITION_COLUMN)
+        widget = self.table.indexWidget(index)
+        combo = widget.findChild(QComboBox) if widget else None
+        if isinstance(combo, QComboBox):
+            combo.blockSignals(True)
+            combo.setCurrentText(str(old_position))
+            combo.blockSignals(False)
 
     def _has_position_conflict(self, row: int, new_position: int) -> bool:
         if new_position == 0:
@@ -633,6 +717,25 @@ class MainWindow(QMainWindow):
                     str(other_row.get("client_id", "")) == client_id
                     and int(other_row.get("campaign_id", 0)) == campaign_id
                     and int(other_row.get("category_id", 0)) == category_id
+                    and int(other_row.get("position", 0)) == new_position
+            ):
+                return True
+
+        return False
+
+    def _has_global_position_conflict(self, row: int, new_position: int) -> bool:
+        if new_position == 0:
+            return False
+
+        current_row = self.model.get_rows()[row]
+        category_id = int(current_row.get("category_id", 0))
+
+        for i, other_row in enumerate(self.model.get_rows()):
+            if i == row:
+                continue
+
+            if (
+                    int(other_row.get("category_id", 0)) == category_id
                     and int(other_row.get("position", 0)) == new_position
             ):
                 return True

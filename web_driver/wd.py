@@ -448,7 +448,7 @@ class WebDriver:
                 session = self._build_requests_session()
 
                 response = session.post(
-                    f"{self.base_url}/seller-api/v1/topbids?limit=4",
+                    f"{self.base_url}/seller-api/v1/topbids?limit=7",
                     json={
                         'category_id': task.category_id,
                         'queries': task.keywords,
@@ -530,19 +530,19 @@ class WebDriver:
             value.sort(key=lambda x: x.position)
 
         for (category_id, _), items in task_map.items():
-            default_bids = [15, 14, 13, 12]
+            default_bids = [17, 16, 15, 14, 13, 12, 11]
             for item in items:
-                while item.position < 5:
+                while item.position < 8:
                     text = f"Кампания={item.campaign_id}, SKU={item.sku}, Позиция={item.position}"
                     self.log(f"{self.log_startswith}Обработка товара: {text}")
 
                     top_bids = self.get_top_bids(item)
                     print(top_bids)
-                    count = len(top_bids) - max([len(items), max([i.position for i in items if i.position < 5])])
+                    count = len(top_bids) - max([len(items), max([i.position for i in items if i.position < 8])])
                     if top_bids is None:
                         self.log(f"{self.log_startswith}Нет данных о ставках")
                         break
-                    elif len(top_bids) < 4 and count < 0:
+                    elif len(top_bids) < 7 and count < 0:
                         top_bids.extend(default_bids[count:])
 
                     print(top_bids)
@@ -597,7 +597,7 @@ class WebDriver:
 
                     break
                 else:
-                    self.log(f"{self.log_startswith}Позиция {item.position} больше лимита в 4")
+                    self.log(f"{self.log_startswith}Позиция {item.position} больше лимита в 7")
 
 
     def load_url(self, url: str) -> None:
